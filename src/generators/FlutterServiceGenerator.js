@@ -73,6 +73,7 @@ ${opciones}}
 import 'package:http/http.dart' as http;
 
 import '../config/api_config.dart';
+import 'auth_service.dart';
 
 /// Error devuelto por el backend, con el mensaje que envía Spring Boot.
 class ApiException implements Exception {
@@ -92,10 +93,8 @@ class ApiException implements Exception {
 
 /// Peticiones HTTP comunes: devuelven el campo "data" de la respuesta del backend.
 class BaseService {
-  static const Map<String, String> _cabeceras = {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Accept': 'application/json',
-  };
+  /// Cada llamada viaja con el token de la sesión: el backend comprueba el rol.
+  Map<String, String> get _cabeceras => AuthService.cabeceras;
 
   String get baseUrl => ApiConfig.baseUrl;
 

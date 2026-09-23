@@ -10,6 +10,7 @@ import { archivoDart, atributosDTO, esAbstracta, esAuxiliar } from './FlutterNom
 import {
   asistenteLocalDart, asistentePantallaDart, asistenteServicioDart
 } from './FlutterAsistenteGenerator.js';
+import { authServicioDart, loginPantallaDart } from './FlutterAuthGenerator.js';
 
 class FlutterProjectBuilder {
   /**
@@ -50,6 +51,7 @@ class FlutterProjectBuilder {
       await this.createProjectStructure();
       await this.generateModels();
       await this.generateServices();
+      await this.generateAutenticacion();
       await this.generateScreens();
       await this.generateAsistente();
       await this.generateMainFiles();
@@ -116,6 +118,20 @@ class FlutterProjectBuilder {
     await fs.writeFile(
       path.join(this.projectPath, 'lib', 'screens', 'asistente_screen.dart'),
       asistentePantallaDart(this.nombreApp, this.entidadesConApi),
+      'utf8'
+    );
+  }
+
+  /** Inicio de sesión: servicio con el token y pantalla de acceso. */
+  async generateAutenticacion() {
+    await fs.writeFile(
+      path.join(this.projectPath, 'lib', 'services', 'auth_service.dart'),
+      authServicioDart(this.nombreApp),
+      'utf8'
+    );
+    await fs.writeFile(
+      path.join(this.projectPath, 'lib', 'screens', 'login_screen.dart'),
+      loginPantallaDart(this.nombreApp),
       'utf8'
     );
   }

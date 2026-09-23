@@ -7,6 +7,9 @@ const __dirname_gen = path.dirname(fileURLToPath(import.meta.url));
 import DiagramParser from './DiagramParser.js';
 import MetadataBuilder from './MetadataBuilder.js';
 import { controladorAsistente, propiedadesAsistente, servicioAsistente } from './AsistenteGenerator.js';
+import {
+    controladorAuth, detectarRoles, entidadUsuario, filtroAuth, propiedadesAuth, repositorioUsuario, servicioAuth
+} from './AuthGenerator.js';
 import EntityGenerator from './EntityGenerator.js';
 import ManyToManyEntityGenerator from './ManyToManyEntityGenerator.js';
 import RepositoryGenerator from './RepositoryGenerator.js';
@@ -73,11 +76,37 @@ class SpringBootProjectBuilder {
         this.generateServices();
         this.generateControllers();
         this.generateConfigClasses();
+        this.generateAutenticacion();
         this.generateAsistente();
         this.generateMainApplication();
         this.generateAuxiliares();
         this.generateReadme();
         this.copyMavenWrapper();
+    }
+
+    /**
+     * Inicio de sesión con roles: los roles salen de las clases de personas del diagrama
+     * (Cliente, Entrenador, Médico…). Todos consultan; solo los de gestión modifican datos.
+     */
+    generateAutenticacion() {
+        const roles = detectarRoles(this.entidadesConcretas);
+        this.rolesDelSistema = roles;
+        const base = path.join(this.projectPath, 'src/main/java/com/example/demo');
+        const archivos = [
+            ['entities/Usuario.java', entidadUsuario()],
+            ['repositories/UsuarioRepository.java', repositorioUsuario()],
+            ['services/AuthService.java', servicioAuth(roles)],
+            ['controllers/AuthController.java', controladorAuth()],
+            ['config/AuthFiltro.java', filtroAuth()],
+        ];
+        for (const [relativo, contenido] of archivos) {
+            const destino = path.join(base, relativo);
+            fs.mkdirSync(path.dirname(destino), { recursive: true });
+            fs.writeFileSync(destino, contenido);
+        }
+        const propiedades = path.join(this.projectPath, 'src/main/resources/application.properties');
+        if (fs.existsSync(propiedades)) fs.appendFileSync(propiedades, propiedadesAuth(roles));
+        console.log(`✅ Inicio de sesión generado con los roles: ${roles.map(r => r.rol).join(', ')}`);
     }
 
     /**

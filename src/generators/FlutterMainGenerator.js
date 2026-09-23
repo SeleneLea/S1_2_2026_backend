@@ -18,8 +18,13 @@ class FlutterMainGenerator {
         return `import 'package:flutter/material.dart';
 
 import 'screens/home_screen.dart';
+import 'screens/login_screen.dart';
+import 'services/auth_service.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Si ya se inició sesión antes, la app abre directo en el inicio
+  await AuthService.recuperar();
   runApp(const MiApp());
 }
 
@@ -32,7 +37,7 @@ class MiApp extends StatelessWidget {
       title: '${textoDart(this.titulo)}',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(colorSchemeSeed: Colors.indigo, useMaterial3: true),
-      home: const HomeScreen(),
+      home: AuthService.haySesion ? const HomeScreen() : const LoginScreen(),
     );
   }
 }
@@ -52,6 +57,7 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.2.0
+  shared_preferences: ^2.3.2
   cupertino_icons: ^1.0.8
 
 dev_dependencies:

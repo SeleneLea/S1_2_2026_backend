@@ -53,7 +53,12 @@ class FlutterScreenGenerator {
 
     generateHomeScreen(nombreApp) {
         const entidades = this.entidadesConApi;
-        const imports = ["import 'asistente_screen.dart';", ...entidades.map(e => `import '${archivoDart(e.name)}_list_screen.dart';`)].join('\n');
+        const imports = [
+            "import 'asistente_screen.dart';",
+            "import 'login_screen.dart';",
+            "import '../services/auth_service.dart';",
+            ...entidades.map(e => `import '${archivoDart(e.name)}_list_screen.dart';`)
+        ].join('\n');
         const entradas = entidades.map(e =>
             `    _Entrada('${textoDart(etiquetaCampo(e.name))}', () => const ${nombreClase(e.name)}ListScreen()),`
         ).join('\n');
@@ -73,7 +78,34 @@ ${entradas}
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('${textoDart(nombreApp)}')),
+      appBar: AppBar(
+        title: const Text('${textoDart(nombreApp)}'),
+        actions: [
+          if (AuthService.haySesion)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Center(
+                child: Text(
+                  '\${AuthService.nombre ?? AuthService.correo ?? ''} · \${AuthService.rol ?? ''}',
+                  style: Theme.of(context).textTheme.labelMedium,
+                ),
+              ),
+            ),
+          IconButton(
+            tooltip: 'Cerrar sesión',
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              await AuthService.cerrarSesion();
+              if (!context.mounted) return;
+              Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (context) => const LoginScreen()),
+                (ruta) => false,
+              );
+            },
+          ),
+        ],
+      ),
       body: ListView.separated(
         padding: const EdgeInsets.all(16),
         itemCount: _entradas.length,
@@ -131,6 +163,7 @@ class _Entrada {
 
 import '../models/${archivo}.dart';
 import '../services/${archivo}_service.dart';
+import '../services/auth_service.dart';
 import '${archivo}_form_screen.dart';
 
 class ${clase}ListScreen extends StatefulWidget {
@@ -203,7 +236,7 @@ class _${clase}ListScreenState extends State<${clase}ListScreen> {
           IconButton(onPressed: _recargar, icon: const Icon(Icons.refresh), tooltip: 'Recargar'),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: !AuthService.puedeGestionar ? null : FloatingActionButton(
         onPressed: () => _abrirFormulario(),
         tooltip: 'Nuevo',
         child: const Icon(Icons.add),
@@ -245,7 +278,7 @@ class _${clase}ListScreenState extends State<${clase}ListScreen> {
                 title: Text(${textoTitulo}),
                 subtitle: Text(${textoSubtitulo}),
                 onTap: () => _abrirFormulario(registro),
-                trailing: IconButton(
+                trailing: !AuthService.puedeGestionar ? null : IconButton(
                   icon: const Icon(Icons.delete_outline),
                   tooltip: 'Eliminar',
                   onPressed: () => _eliminar(registro),
