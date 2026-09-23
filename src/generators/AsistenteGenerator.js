@@ -54,16 +54,21 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * Asistente del sistema. Responde preguntas sobre ${nombreApp} usando un servicio de IA
- * compatible con la API de OpenAI (DeepSeek por defecto).
+ * Asistente del sistema. Responde preguntas sobre ${nombreApp}.
  *
- * La clave se define fuera del código, en la variable de entorno DEEPSEEK_API_KEY.
+ * Usa los servicios de IA en el orden configurado (por defecto Gemini y luego DeepSeek): si el
+ * primero se queda sin cuota, falla o tarda demasiado, prueba con el siguiente. Las claves nunca
+ * van en el código: salen de las variables de entorno GEMINI_API_KEY y DEEPSEEK_API_KEY.
  */
 @Service
 public class AsistenteService {
@@ -88,26 +93,122 @@ De qué trata la aplicación:
 Estas son las clases del sistema y sus campos:
 """;
 
-    @Value("\${asistente.api-url:https://api.deepseek.com/chat/completions}")
-    private String apiUrl;
+    /** Orden en que se prueban los servicios de IA. */
+    @Value("\${asistente.orden:gemini,deepseek}")
+    private String orden;
 
-    @Value("\${asistente.api-key:}")
-    private String apiKey;
+    @Value("\${asistente.gemini.api-key:}")
+    private String claveGemini;
 
-    @Value("\${asistente.modelo:deepseek-chat}")
-    private String modelo;
+    @Value("\${asistente.gemini.modelo:gemini-2.5-flash}")
+    private String modeloGemini;
+
+    @Value("\${asistente.deepseek.api-key:}")
+    private String claveDeepSeek;
+
+    @Value("\${asistente.deepseek.modelo:deepseek-chat}")
+    private String modeloDeepSeek;
+
+    @Value("\${asistente.deepseek.api-url:https://api.deepseek.com/chat/completions}")
+    private String urlDeepSeek;
 
     private final ObjectMapper json = new ObjectMapper();
+    // HTTP/1.1: con HTTP/2 las llamadas a Gemini se quedaban colgadas hasta agotar el tiempo
     private final HttpClient cliente = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(Duration.ofSeconds(10))
             .build();
 
-    /** ¿Hay clave configurada? Sin ella la app móvil usa su asistente sin internet. */
-    public boolean estaConfigurado() {
-        return apiKey != null && !apiKey.isBlank();
+    /** Proveedores que tienen clave, en el orden configurado. */
+    private List<String> disponibles() {
+        List<String> lista = new ArrayList<>();
+        for (String nombre : orden.split(",")) {
+            String p = nombre.trim().toLowerCase();
+            if (p.equals("gemini") && claveGemini != null && !claveGemini.isBlank()) lista.add("gemini");
+            if (p.equals("deepseek") && claveDeepSeek != null && !claveDeepSeek.isBlank()) lista.add("deepseek");
+        }
+        return lista;
     }
 
-    public String responder(String pregunta) throws Exception {
+    public boolean estaConfigurado() {
+        return !disponibles().isEmpty();
+    }
+
+    /** Nombre del servicio que respondió, para mostrarlo en la app. */
+    public static class Respuesta {
+        public final String texto;
+        public final String proveedor;
+
+        public Respuesta(String texto, String proveedor) {
+            this.texto = texto;
+            this.proveedor = proveedor;
+        }
+    }
+
+    /**
+     * Pregunta al primer servicio con clave; si se queda sin cuota o falla, prueba el siguiente.
+     */
+    public Respuesta responder(String pregunta) {
+        List<String> proveedores = disponibles();
+        if (proveedores.isEmpty()) {
+            throw new IllegalStateException("No hay ningún servicio de IA configurado.");
+        }
+        IllegalStateException ultimoError = null;
+        for (String proveedor : proveedores) {
+            try {
+                String texto = proveedor.equals("gemini")
+                        ? preguntarGemini(pregunta)
+                        : preguntarDeepSeek(pregunta);
+                if (texto != null && !texto.isBlank()) {
+                    return new Respuesta(texto.trim(), proveedor);
+                }
+                ultimoError = new IllegalStateException("El servicio " + proveedor + " respondió vacío.");
+            } catch (Exception e) {
+                ultimoError = new IllegalStateException(
+                        "El servicio " + proveedor + " no respondió: " + e.getMessage());
+                System.out.println("Asistente: " + proveedor + " falló (" + e.getMessage() + "); se prueba el siguiente");
+            }
+        }
+        throw ultimoError;
+    }
+
+    private String preguntarGemini(String pregunta) throws Exception {
+        String url = "https://generativelanguage.googleapis.com/v1beta/models/"
+                + URLEncoder.encode(modeloGemini, StandardCharsets.UTF_8) + ":generateContent";
+
+        ObjectNode sistema = json.createObjectNode();
+        sistema.putArray("parts").addObject().put("text", INSTRUCCIONES + CATALOGO);
+
+        ObjectNode contenido = json.createObjectNode();
+        contenido.put("role", "user");
+        contenido.putArray("parts").addObject().put("text", pregunta);
+
+        ArrayNode contenidos = json.createArrayNode();
+        contenidos.add(contenido);
+
+        ObjectNode ajustes = json.createObjectNode();
+        ajustes.put("temperature", 0.2);
+        ajustes.put("maxOutputTokens", 400);
+
+        ObjectNode cuerpo = json.createObjectNode();
+        cuerpo.set("system_instruction", sistema);
+        cuerpo.set("contents", contenidos);
+        cuerpo.set("generationConfig", ajustes);
+
+        HttpRequest peticion = HttpRequest.newBuilder(URI.create(url))
+                .header("Content-Type", "application/json")
+                .header("x-goog-api-key", claveGemini)
+                .timeout(Duration.ofSeconds(60))
+                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(cuerpo)))
+                .build();
+
+        HttpResponse<String> respuesta = cliente.send(peticion, HttpResponse.BodyHandlers.ofString());
+        revisarEstado(respuesta.statusCode(), "Gemini");
+        JsonNode datos = json.readTree(respuesta.body());
+        return datos.path("candidates").path(0).path("content").path("parts").path(0).path("text").asText("");
+    }
+
+    private String preguntarDeepSeek(String pregunta) throws Exception {
         ObjectNode sistema = json.createObjectNode();
         sistema.put("role", "system");
         sistema.put("content", INSTRUCCIONES + CATALOGO);
@@ -121,34 +222,38 @@ Estas son las clases del sistema y sus campos:
         mensajes.add(usuario);
 
         ObjectNode cuerpo = json.createObjectNode();
-        cuerpo.put("model", modelo);
+        cuerpo.put("model", modeloDeepSeek);
         cuerpo.put("temperature", 0.2);
         cuerpo.put("max_tokens", 400);
         cuerpo.set("messages", mensajes);
 
-        HttpRequest peticion = HttpRequest.newBuilder(URI.create(apiUrl))
+        HttpRequest peticion = HttpRequest.newBuilder(URI.create(urlDeepSeek))
                 .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer " + apiKey)
+                .header("Authorization", "Bearer " + claveDeepSeek)
                 .timeout(Duration.ofSeconds(60))
                 .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(cuerpo)))
                 .build();
 
         HttpResponse<String> respuesta = cliente.send(peticion, HttpResponse.BodyHandlers.ofString());
-        if (respuesta.statusCode() == 401 || respuesta.statusCode() == 403) {
-            throw new IllegalStateException("La clave del asistente no es válida.");
-        }
-        if (respuesta.statusCode() == 429) {
-            throw new IllegalStateException("El asistente alcanzó su límite de uso. Intenta en unos minutos.");
-        }
-        if (respuesta.statusCode() >= 400) {
-            throw new IllegalStateException("El servicio de IA no pudo responder.");
-        }
+        revisarEstado(respuesta.statusCode(), "DeepSeek");
         JsonNode datos = json.readTree(respuesta.body());
-        String texto = datos.path("choices").path(0).path("message").path("content").asText("");
-        if (texto.isBlank()) {
-            throw new IllegalStateException("El servicio de IA devolvió una respuesta vacía.");
+        return datos.path("choices").path(0).path("message").path("content").asText("");
+    }
+
+    /** Traduce los códigos de error a algo que se entienda en el log y en la app. */
+    private void revisarEstado(int estado, String servicio) {
+        if (estado == 401 || estado == 403) {
+            throw new IllegalStateException("la clave de " + servicio + " no es válida");
         }
-        return texto.trim();
+        if (estado == 429) {
+            throw new IllegalStateException(servicio + " se quedó sin cuota");
+        }
+        if (estado >= 500) {
+            throw new IllegalStateException(servicio + " tuvo un problema en su servidor");
+        }
+        if (estado >= 400) {
+            throw new IllegalStateException(servicio + " rechazó la consulta (" + estado + ")");
+        }
     }
 }
 `;
@@ -205,12 +310,13 @@ public class AsistenteController {
         }
         if (!service.estaConfigurado()) {
             respuesta.put("success", false);
-            respuesta.put("message", "El asistente por internet no está configurado: falta la variable DEEPSEEK_API_KEY en el servidor.");
+            respuesta.put("message", "El asistente por internet no está configurado: falta GEMINI_API_KEY o DEEPSEEK_API_KEY en el servidor.");
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(respuesta);
         }
         try {
+            AsistenteService.Respuesta salida = service.responder(pregunta);
             respuesta.put("success", true);
-            respuesta.put("data", Map.of("respuesta", service.responder(pregunta)));
+            respuesta.put("data", Map.of("respuesta", salida.texto, "proveedor", salida.proveedor));
             return ResponseEntity.ok(respuesta);
         } catch (IllegalStateException e) {
             respuesta.put("success", false);
@@ -229,12 +335,16 @@ public class AsistenteController {
 export const propiedadesAsistente = () => `
 # ===================================================================
 # ASISTENTE DE IA (opcional)
-# La clave NO se escribe aquí: se toma de la variable de entorno DEEPSEEK_API_KEY.
-#   Windows:  setx DEEPSEEK_API_KEY "tu-clave"
-#   Linux:    export DEEPSEEK_API_KEY="tu-clave"
-# Sin clave, la app móvil sigue respondiendo con su asistente sin internet.
+# Se prueban en orden: primero Gemini y, si se queda sin cuota o falla, DeepSeek.
+# Las claves NO se escriben aquí: se toman de las variables de entorno.
+#   Windows:  setx GEMINI_API_KEY "tu-clave"     setx DEEPSEEK_API_KEY "tu-clave"
+#   Linux:    export GEMINI_API_KEY="tu-clave"   export DEEPSEEK_API_KEY="tu-clave"
+# Sin ninguna clave, la app móvil sigue respondiendo con su asistente sin internet.
 # ===================================================================
-asistente.api-url=https://api.deepseek.com/chat/completions
-asistente.modelo=deepseek-chat
-asistente.api-key=\${DEEPSEEK_API_KEY:}
+asistente.orden=gemini,deepseek
+asistente.gemini.modelo=gemini-2.5-flash
+asistente.gemini.api-key=\${GEMINI_API_KEY:}
+asistente.deepseek.api-url=https://api.deepseek.com/chat/completions
+asistente.deepseek.modelo=deepseek-chat
+asistente.deepseek.api-key=\${DEEPSEEK_API_KEY:}
 `;

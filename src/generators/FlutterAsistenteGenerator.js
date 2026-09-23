@@ -159,7 +159,15 @@ ${catalogoDart(entidades, atributosDe)}
 
 export const asistenteServicioDart = () => `import 'base_service.dart';
 
-/// Asistente del servidor: POST /api/asistente (usa el servicio de IA configurado en el backend).
+/// Respuesta del servidor: el texto y qué servicio de IA lo generó.
+class RespuestaServidor {
+  final String texto;
+  final String proveedor;
+  const RespuestaServidor(this.texto, this.proveedor);
+}
+
+/// Asistente del servidor: POST /api/asistente. El backend prueba los servicios de IA en orden
+/// (primero Gemini y, si se queda sin cuota o falla, DeepSeek).
 class AsistenteService extends BaseService {
   /// ¿El servidor tiene configurado el asistente por internet?
   Future<bool> disponible() async {
@@ -172,11 +180,13 @@ class AsistenteService extends BaseService {
     }
   }
 
-  /// Devuelve la respuesta del asistente del servidor.
-  Future<String> preguntar(String pregunta) async {
+  /// Respuesta del asistente del servidor, con el servicio de IA que la generó.
+  Future<RespuestaServidor> preguntar(String pregunta) async {
     final datos = await postData('/asistente', {'pregunta': pregunta});
-    if (datos is Map && datos['respuesta'] is String) return datos['respuesta'] as String;
-    return datos?.toString() ?? '';
+    if (datos is Map && datos['respuesta'] is String) {
+      return RespuestaServidor(datos['respuesta'] as String, (datos['proveedor'] as String?) ?? '');
+    }
+    return RespuestaServidor(datos?.toString() ?? '', '');
   }
 }
 `;
@@ -261,7 +271,10 @@ ${rutas}
     // No alcanzó con el asistente del teléfono: se intenta con el del servidor
     try {
       final respuesta = await _service.preguntar(pregunta);
-      setState(() => _mensajes.add(_Mensaje(respuesta, origen: 'asistente del servidor')));
+      final origen = respuesta.proveedor.isEmpty
+          ? 'asistente del servidor'
+          : 'asistente del servidor · \${respuesta.proveedor}';
+      setState(() => _mensajes.add(_Mensaje(respuesta.texto, origen: origen)));
     } on ApiException catch (e) {
       setState(() => _mensajes.add(_Mensaje('\${local.texto}\\n\\n(\${e.mensaje})', origen: 'en este teléfono')));
     } catch (_) {

@@ -888,11 +888,17 @@ El backend trae un asistente que responde preguntas sobre el sistema:
    POST http://localhost:8080/api/asistente   { "pregunta": "¿qué datos pide un cliente?" }
    GET  http://localhost:8080/api/asistente/estado
 
-Ya sabe de qué trata este proyecto y qué guarda cada clase. Para que responda
-hace falta una clave de DeepSeek, que NO se escribe en el código:
+Ya sabe de qué trata este proyecto y qué guarda cada clase. Prueba los servicios
+en orden: primero Gemini y, si se queda sin cuota o falla, DeepSeek. Las claves NO
+se escriben en el código:
 
-   Windows:  setx DEEPSEEK_API_KEY "tu-clave"     (y reinicia la terminal)
-   Linux:    export DEEPSEEK_API_KEY="tu-clave"
+   Windows:  setx GEMINI_API_KEY "tu-clave"
+             setx DEEPSEEK_API_KEY "tu-clave"    (y reinicia la terminal)
+   Linux:    export GEMINI_API_KEY="tu-clave"
+             export DEEPSEEK_API_KEY="tu-clave"
+
+Con una sola de las dos ya funciona; el orden se cambia en application.properties
+(asistente.orden).
 
 Sin clave, la app móvil igual responde con su asistente sin internet.
 

@@ -1,5 +1,6 @@
 import { clienteGemini } from '../libs/geminiRotacion.js';
 import { mensajeErrorIA } from '../libs/mensajesError.js';
+import { generarConDeepSeek, hayClaveDeepSeek } from '../libs/deepseek.js';
 
 // Cliente de Gemini que rota las API keys configuradas (GEMINI_API_KEYS / GEMINI_API_KEY)
 const genAI = clienteGemini;
@@ -195,8 +196,21 @@ class AIEditorController {
                     console.warn(`Model ${m} overloaded, trying next model if available`);
                     continue;
                 } else {
-                    throw err;
+                    // Cuota agotada, clave rechazada o error del pedido: se sale del bucle
+                    // para intentar con el respaldo en vez de cortar aquí.
+                    break;
                 }
+            }
+        }
+        // Gemini no pudo: se intenta con DeepSeek, que entiende el mismo pedido de texto
+        if (hayClaveDeepSeek()) {
+            try {
+                const texto = await generarConDeepSeek(prompt);
+                console.warn('Gemini no respondió; se usó DeepSeek como respaldo');
+                return { model: 'deepseek', text: texto };
+            } catch (errorRespaldo) {
+                console.error('DeepSeek tampoco pudo:', errorRespaldo?.message || errorRespaldo);
+                lastError = lastError || errorRespaldo;
             }
         }
         const e = new Error(`All models exhausted or overloaded. Last error: ${lastError?.message || String(lastError)}`);
