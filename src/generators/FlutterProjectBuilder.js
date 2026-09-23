@@ -6,7 +6,10 @@ import FlutterModelGenerator from './FlutterModelGenerator.js';
 import FlutterServiceGenerator from './FlutterServiceGenerator.js';
 import FlutterScreenGenerator from './FlutterScreenGenerator.js';
 import FlutterMainGenerator from './FlutterMainGenerator.js';
-import { archivoDart, esAbstracta, esAuxiliar } from './FlutterNombres.js';
+import { archivoDart, atributosDTO, esAbstracta, esAuxiliar } from './FlutterNombres.js';
+import {
+  asistenteLocalDart, asistentePantallaDart, asistenteServicioDart
+} from './FlutterAsistenteGenerator.js';
 
 class FlutterProjectBuilder {
   /**
@@ -15,9 +18,11 @@ class FlutterProjectBuilder {
    * @param {string} basePath     carpeta temporal de exportaciones
    * @param {{ nombreApp?: string }} opciones  nombre visible y del paquete Dart
    */
-  constructor(projectName, xmlString, basePath, { nombreApp } = {}) {
+  constructor(projectName, xmlString, basePath, { nombreApp, proposito } = {}) {
     this.projectName = this.sanitizeProjectName(projectName);
     this.nombreApp = nombreApp || projectName;
+    // De qué trata el sistema: el asistente del teléfono lo usa para presentarse
+    this.proposito = proposito || '';
     this.nombrePaquete = this.sanitizeProjectName(nombreApp || projectName);
     this.xmlString = xmlString;
     this.basePath = basePath;
@@ -46,6 +51,7 @@ class FlutterProjectBuilder {
       await this.generateModels();
       await this.generateServices();
       await this.generateScreens();
+      await this.generateAsistente();
       await this.generateMainFiles();
     } catch (error) {
       console.error('❌ Error construyendo proyecto Flutter:', error);
@@ -61,6 +67,7 @@ class FlutterProjectBuilder {
       path.join(this.projectPath, 'lib', 'services'),
       path.join(this.projectPath, 'lib', 'screens'),
       path.join(this.projectPath, 'lib', 'config'),
+      path.join(this.projectPath, 'lib', 'asistente'),
       path.join(this.projectPath, 'test'),
     ];
     for (const dir of directories) {
@@ -89,6 +96,28 @@ class FlutterProjectBuilder {
       const filePath = path.join(this.projectPath, 'lib', 'services', `${archivoDart(entity.name)}_service.dart`);
       await fs.writeFile(filePath, generator.generate(entity), 'utf8');
     }
+  }
+
+  /**
+   * Asistente de la app: el del teléfono (sin internet) y el que consulta al backend.
+   */
+  async generateAsistente() {
+    const atributosDe = (entity) => atributosDTO(entity, this.entities, this.relationships);
+    await fs.writeFile(
+      path.join(this.projectPath, 'lib', 'asistente', 'asistente_local.dart'),
+      asistenteLocalDart(this.nombreApp, this.entidadesConApi, atributosDe, this.proposito),
+      'utf8'
+    );
+    await fs.writeFile(
+      path.join(this.projectPath, 'lib', 'services', 'asistente_service.dart'),
+      asistenteServicioDart(),
+      'utf8'
+    );
+    await fs.writeFile(
+      path.join(this.projectPath, 'lib', 'screens', 'asistente_screen.dart'),
+      asistentePantallaDart(this.nombreApp, this.entidadesConApi),
+      'utf8'
+    );
   }
 
   async generateScreens() {

@@ -53,7 +53,7 @@ class FlutterScreenGenerator {
 
     generateHomeScreen(nombreApp) {
         const entidades = this.entidadesConApi;
-        const imports = entidades.map(e => `import '${archivoDart(e.name)}_list_screen.dart';`).join('\n');
+        const imports = ["import 'asistente_screen.dart';", ...entidades.map(e => `import '${archivoDart(e.name)}_list_screen.dart';`)].join('\n');
         const entradas = entidades.map(e =>
             `    _Entrada('${textoDart(etiquetaCampo(e.name))}', () => const ${nombreClase(e.name)}ListScreen()),`
         ).join('\n');
@@ -66,6 +66,7 @@ class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
   static final List<_Entrada> _entradas = [
+    _Entrada('Asistente', () => const AsistenteScreen(), asistente: true),
 ${entradas}
   ];
 
@@ -80,8 +81,9 @@ ${entradas}
         itemBuilder: (context, index) {
           final entrada = _entradas[index];
           return Card(
+            color: entrada.asistente ? Theme.of(context).colorScheme.primaryContainer : null,
             child: ListTile(
-              leading: const Icon(Icons.view_list),
+              leading: Icon(entrada.asistente ? Icons.smart_toy : Icons.view_list),
               title: Text(entrada.titulo),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.push(
@@ -99,8 +101,9 @@ ${entradas}
 class _Entrada {
   final String titulo;
   final Widget Function() pantalla;
+  final bool asistente;
 
-  const _Entrada(this.titulo, this.pantalla);
+  const _Entrada(this.titulo, this.pantalla, {this.asistente = false});
 }
 `;
     }

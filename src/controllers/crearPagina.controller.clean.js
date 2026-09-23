@@ -8,6 +8,7 @@ import SpringBootProjectBuilder from '../generators/SpringBootProjectBuilder.js'
 import SqlDDLGenerator from '../generators/SqlDDLGenerator.js';
 import os from 'os';
 import { puedeAccederASala } from '../libs/salaAccess.js';
+import { describirProyecto } from '../libs/descripcionProyecto.js';
 
 // Portable: configurable por env, con fallback al tmp del sistema (funciona en Windows y Linux)
 const rutaBase = process.env.EXPORT_TMP_DIR || path.join(os.tmpdir(), 'proyectos');
@@ -338,9 +339,17 @@ class CrearPaginaController {
       const dbName = nombreBaseDatos(sala.title);
 
       const converted = this.convertirFrontendADiagramParser(elements, connections);
+      // De qué trata el sistema: el asistente del proyecto generado lo usa como contexto
+      const proposito = await describirProyecto({
+        titulo: sala.title,
+        descripcion: sala.description,
+        entidades: Object.values(converted.elements || {}),
+        relaciones: Object.values(converted.connections || {})
+      });
       const builder = new SpringBootProjectBuilder(projectName, JSON.stringify(converted), rutaBase, {
         dbName,
-        nombreProyecto: sanitizarNombreProyecto(sala.title)
+        nombreProyecto: sanitizarNombreProyecto(sala.title),
+        proposito
       });
       console.log('🚀 Iniciando generación de proyecto Spring Boot desde sala con SpringBootProjectBuilder...');
       await builder.build();

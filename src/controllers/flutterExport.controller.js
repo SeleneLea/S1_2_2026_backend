@@ -7,6 +7,7 @@ import { response } from '../middlewares/catchedAsync.js';
 import os from 'os';
 import fs from 'fs';
 import { puedeAccederASala } from '../libs/salaAccess.js';
+import { describirProyecto } from '../libs/descripcionProyecto.js';
 
 // NOTE: Este valor debe coincidir con la ruta usada por CrearPaginaController
 // donde se almacenan proyectos generados temporalmente.
@@ -52,8 +53,15 @@ const FlutterExportController = {
       const converted = CrearPaginaController.convertirFrontendADiagramParser(elements, connections);
 
       // El timestamp solo distingue la carpeta temporal; la app se llama como el tablero
+      const proposito = await describirProyecto({
+        titulo: sala.title,
+        descripcion: sala.description,
+        entidades: Object.values(converted.elements || {}),
+        relaciones: Object.values(converted.connections || {})
+      });
       const builder = new FlutterProjectBuilder(projectName, JSON.stringify(converted), rutaBase, {
-        nombreApp: sanitizarNombreProyecto(sala.title).replace(/-/g, '_')
+        nombreApp: sanitizarNombreProyecto(sala.title).replace(/-/g, '_'),
+        proposito
       });
       console.log('🚀 Iniciando generación de proyecto Flutter desde sala con FlutterProjectBuilder...');
       await builder.build();

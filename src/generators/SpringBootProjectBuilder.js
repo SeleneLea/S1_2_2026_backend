@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 const __dirname_gen = path.dirname(fileURLToPath(import.meta.url));
 import DiagramParser from './DiagramParser.js';
 import MetadataBuilder from './MetadataBuilder.js';
+import { controladorAsistente, propiedadesAsistente, servicioAsistente } from './AsistenteGenerator.js';
 import EntityGenerator from './EntityGenerator.js';
 import ManyToManyEntityGenerator from './ManyToManyEntityGenerator.js';
 import RepositoryGenerator from './RepositoryGenerator.js';
@@ -17,11 +18,13 @@ import MapperGenerator from './MapperGenerator.js';
 
 class SpringBootProjectBuilder {
 
-    constructor(titulo, xmlString, rutaBase, { dbName, nombreProyecto } = {}) {
+    constructor(titulo, xmlString, rutaBase, { dbName, nombreProyecto, proposito } = {}) {
         this.titulo = titulo;
         // Nombre visible del proyecto (artifactId, JAR, README). El titulo de la
         // carpeta temporal lleva un timestamp que no debe llegar al proyecto.
         this.nombreProyecto = nombreProyecto || titulo;
+        // De qué trata el sistema: lo escribe el diagramador al exportar y lo usa el asistente
+        this.proposito = proposito || '';
         this.xmlString = xmlString;
         this.rutaBase = rutaBase;
         this.projectPath = path.join(rutaBase, titulo);
@@ -70,10 +73,36 @@ class SpringBootProjectBuilder {
         this.generateServices();
         this.generateControllers();
         this.generateConfigClasses();
+        this.generateAsistente();
         this.generateMainApplication();
         this.generateAuxiliares();
         this.generateReadme();
         this.copyMavenWrapper();
+    }
+
+    /**
+     * Asistente de IA del proyecto: endpoint /api/asistente que responde preguntas sobre el
+     * sistema. La clave del servicio se toma de la variable de entorno, nunca del código.
+     */
+    generateAsistente() {
+        const servicios = path.join(this.projectPath, 'src/main/java/com/example/demo/services');
+        const controladores = path.join(this.projectPath, 'src/main/java/com/example/demo/controllers');
+        fs.mkdirSync(servicios, { recursive: true });
+        fs.mkdirSync(controladores, { recursive: true });
+        fs.writeFileSync(
+            path.join(servicios, 'AsistenteService.java'),
+            servicioAsistente(this.nombreProyecto, this.entidadesConcretas, this.parsedDiagram.relationships, this.proposito)
+        );
+        fs.writeFileSync(
+            path.join(controladores, 'AsistenteController.java'),
+            controladorAsistente(this.nombreProyecto)
+        );
+        // La configuración del asistente se agrega al final de application.properties
+        const propiedades = path.join(this.projectPath, 'src/main/resources/application.properties');
+        if (fs.existsSync(propiedades)) {
+            fs.appendFileSync(propiedades, propiedadesAsistente());
+        }
+        console.log('✅ Asistente de IA generado (endpoint /api/asistente)');
     }
 
     /**
@@ -849,6 +878,23 @@ Abre tu navegador o usa curl:
 http://localhost:8080/api
 
 Deberías ver una respuesta JSON (aunque sea un error de "no encontrado")
+
+═══════════════════════════════════════════════════════════════════════
+ASISTENTE DE IA (opcional)
+═══════════════════════════════════════════════════════════════════════
+
+El backend trae un asistente que responde preguntas sobre el sistema:
+
+   POST http://localhost:8080/api/asistente   { "pregunta": "¿qué datos pide un cliente?" }
+   GET  http://localhost:8080/api/asistente/estado
+
+Ya sabe de qué trata este proyecto y qué guarda cada clase. Para que responda
+hace falta una clave de DeepSeek, que NO se escribe en el código:
+
+   Windows:  setx DEEPSEEK_API_KEY "tu-clave"     (y reinicia la terminal)
+   Linux:    export DEEPSEEK_API_KEY="tu-clave"
+
+Sin clave, la app móvil igual responde con su asistente sin internet.
 
 ═══════════════════════════════════════════════════════════════════════
 PASO 4: CONFIGURAR FLUTTER PARA CONECTARSE
