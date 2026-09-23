@@ -11,6 +11,7 @@ import SqlDDLGenerator from '../generators/SqlDDLGenerator.js';
 import os from 'os';
 import { puedeAccederASala } from '../libs/salaAccess.js';
 import { describirProyecto } from '../libs/descripcionProyecto.js';
+import { escribirPostman } from '../postman/postmanDesdeProyecto.js';
 
 // Portable: configurable por env, con fallback al tmp del sistema (funciona en Windows y Linux)
 const rutaBase = process.env.EXPORT_TMP_DIR || path.join(os.tmpdir(), 'proyectos');
@@ -398,6 +399,12 @@ class CrearPaginaController {
       const carpetaBD = path.join(resolverDentroDeBase(projectName), 'database');
       fs.mkdirSync(carpetaBD, { recursive: true });
       fs.writeFileSync(path.join(carpetaBD, `${dbName}.sql`), new SqlDDLGenerator(converted, dbName).generate());
+      // Colección de Postman y guía para probar la API, leídas del proyecto recién generado
+      try {
+        escribirPostman(resolverDentroDeBase(projectName), sanitizarNombreProyecto(sala.title));
+      } catch (errorPostman) {
+        console.warn('No se pudo agregar la colección de Postman:', errorPostman?.message || errorPostman);
+      }
       console.log('✅ Proyecto Spring Boot generado exitosamente desde sala');
       await this.comprimirProyecto(projectName);
       await this.enviarZip(res, projectName, `${sanitizarNombreProyecto(sala.title)}-spring-boot.zip`);

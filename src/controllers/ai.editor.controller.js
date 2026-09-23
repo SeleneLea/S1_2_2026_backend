@@ -202,8 +202,9 @@ class AIEditorController {
                 }
             }
         }
-        // Gemini no pudo: se intenta con DeepSeek, que entiende el mismo pedido de texto
-        if (hayClaveDeepSeek()) {
+        // Gemini no pudo: se intenta con DeepSeek, que entiende el mismo pedido de texto.
+        // Un pedido con imagen (arreglo de partes) no puede ir a DeepSeek: no ve imágenes.
+        if (hayClaveDeepSeek() && !Array.isArray(prompt)) {
             try {
                 const texto = await generarConDeepSeek(prompt);
                 console.warn('Gemini no respondió; se usó DeepSeek como respaldo');
@@ -648,8 +649,8 @@ class AIEditorController {
     // Main modify diagram function
     static async modifyDiagram(req, res) {
         try {
-            const { 
-                prompt, 
+            let {
+                prompt,
                 mode = 'modify', 
                 dryRun = false, 
                 nodes: curNodes = [], 
@@ -659,10 +660,26 @@ class AIEditorController {
                 salaId = null 
             } = req.body || {};
 
+            // Una foto o captura también edita el diagrama actual: llega como formulario con la
+            // imagen y el estado del tablero en texto JSON.
+            const imagen = req.files && req.files.image && req.files.image[0];
+            const comoLista = (valor) => {
+                if (Array.isArray(valor)) return valor;
+                if (typeof valor === 'string' && valor.trim()) {
+                    try { const v = JSON.parse(valor); return Array.isArray(v) ? v : []; } catch { return []; }
+                }
+                return [];
+            };
+            curNodes = comoLista(curNodes);
+            curEdges = comoLista(curEdges);
+            if (imagen && (!prompt || !String(prompt).trim())) {
+                prompt = 'Actualiza el diagrama actual con lo que muestra la imagen.';
+            }
+
             if (!prompt || typeof prompt !== 'string') {
-                return res.status(400).json({ 
-                    success: false, 
-                    error: 'Se requiere el campo prompt con la descripción de la modificación' 
+                return res.status(400).json({
+                    success: false,
+                    error: 'Se requiere el campo prompt con la descripción de la modificación'
                 });
             }
 
@@ -768,7 +785,18 @@ RESULTADO ESPERADO: Estado modificado basado en el estado actual, NO un diagrama
 
 
             // Llamar a la IA para procesar la modificación
-            const fullPrompt = `${EDITOR_SYSTEM_PROMPT}\n\n${aiPrompt}`;
+            if (imagen) {
+                aiPrompt += `
+
+IMAGEN ADJUNTA: el usuario envió una foto o captura (diagrama dibujado, pizarra, apunte o esquema).
+- Léela y aplica al ESTADO ACTUAL lo que muestra: agrega las clases, atributos, métodos y relaciones nuevas.
+- Si una clase de la imagen ya existe (mismo nombre), MODIFÍCALA conservando su id: no la dupliques.
+- No elimines lo que no aparece en la imagen, salvo que la instrucción lo pida.`;
+            }
+            const textoPrompt = `${EDITOR_SYSTEM_PROMPT}\n\n${aiPrompt}`;
+            const fullPrompt = imagen
+                ? [textoPrompt, { inlineData: { mimeType: imagen.mimetype || 'image/jpeg', data: imagen.buffer.toString('base64') } }]
+                : textoPrompt;
             const modelsEnv = process.env.GEMINI_MODELS || process.env.GEMINI_MODEL || 'gemini-2.5-flash';
             const modelsList = Array.isArray(modelsEnv) ? modelsEnv : String(modelsEnv).split(',').map(s => s.trim()).filter(Boolean);
             
@@ -810,21 +838,29 @@ RESULTADO ESPERADO: Estado modificado basado en el estado actual, NO un diagrama
             // Validar y normalizar la respuesta
             const validatedResponse = AIEditorController.validateAndNormalizeEditorResponse(aiResponse);
 
-            // Convertir respuesta de IA a formato React Flow
-            const resultNodes = validatedResponse.elements.map((element, index) => ({
-                id: element.id || `node_${Date.now()}_${index}`,
-                type: 'classNode',
-                position: element.position || { 
-                    x: Math.random() * 600 + 100, 
-                    y: Math.random() * 400 + 100 
-                },
-                data: {
-                    className: element.name,
-                    attributes: Array.isArray(element.attributes) ? element.attributes : [],
-                    methods: Array.isArray(element.methods) ? element.methods : [],
-                    _aiModified: true
-                }
-            }));
+            // Convertir respuesta de IA a formato React Flow. Si la clase ya existía se conserva lo
+            // que la IA no ve (estereotipo, tamaño, posición): solo cambian nombre y miembros.
+            const nodoPrevio = new Map(curNodes.map(n => [n.id, n]));
+            const resultNodes = validatedResponse.elements.map((element, index) => {
+                const previo = element.id ? nodoPrevio.get(element.id) : null;
+                return {
+                    ...(previo || {}),
+                    id: element.id || `node_${Date.now()}_${index}`,
+                    type: 'classNode',
+                    position: element.position || previo?.position || {
+                        x: Math.random() * 600 + 100,
+                        y: Math.random() * 400 + 100
+                    },
+                    data: {
+                        ...(previo?.data || {}),
+                        className: element.name,
+                        attributes: Array.isArray(element.attributes) ? element.attributes : [],
+                        methods: Array.isArray(element.methods) ? element.methods : [],
+                        _aiModified: true
+                    }
+                };
+            });
+            const aristaPrevia = new Map(curEdges.map(e => [e.id, e]));
 
             // Procesar relaciones con cardinalidades
             const resultEdges = [];
@@ -853,12 +889,16 @@ RESULTADO ESPERADO: Estado modificado basado en el estado actual, NO un diagrama
                     // Procesar cardinalidad
                     const cardinalityData = AIEditorController.parseCardinality(relationship.cardinality);
                     
+                    const previa = relationship.id ? aristaPrevia.get(relationship.id) : null;
+                    const mismaArista = previa && previa.source === sourceId && previa.target === targetId;
                     resultEdges.push({
+                        ...(mismaArista ? previa : {}),
                         id: relationship.id || `edge_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                         source: sourceId,
                         target: targetId,
                         type: 'umlEdge',
                         data: {
+                            ...(mismaArista ? previa.data : {}),
                             type: relationship.type || 'Association',
                             cardinality: relationship.cardinality,
                             startLabel: cardinalityData.startLabel,
