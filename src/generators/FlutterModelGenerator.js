@@ -131,6 +131,8 @@ ${ayudaFecha}`;
             case 'bool': return `${valor} as bool?`;
             case 'DateTime': return `_leerFecha(${valor})`;
             case 'List<int>': return `(${valor} as List?)?.map((e) => (e as num).toInt()).toList()`;
+            // Listas de ids de un muchos a muchos con clave de texto
+            case 'List<String>': return `(${valor} as List?)?.map((e) => e.toString()).toList()`;
             default: return `${valor}?.toString()`;
         }
     }
