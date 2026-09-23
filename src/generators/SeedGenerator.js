@@ -67,6 +67,8 @@ const textoPara = (campo, i, contexto) => {
     if (esCampo(campo, 'ci', 'dni', 'nit', 'cedula', 'documento', 'carnet')) return DOCUMENTOS[i % DOCUMENTOS.length];
     if (incluye(campo, 'direccion', 'domicilio', 'address', 'ubicacion')) return DIRECCIONES[i % DIRECCIONES.length];
     if (incluye(campo, 'sexo', 'genero')) return SEXOS[i % SEXOS.length];
+    // "hora" escrita como texto en el diagrama: un 08:30 se lee mejor que "Hora 1"
+    if (incluye(campo, 'hora')) return ['08:30', '09:15', '10:45', '14:00', '16:30'][i % 5];
     if (incluye(campo, 'estado', 'status', 'situacion')) return ESTADOS[i % ESTADOS.length];
     if (incluye(campo, 'descripcion', 'detalle', 'observacion', 'comentario', 'resumen')) {
         return `${contexto.entidad} de ejemplo ${i + 1}`;
