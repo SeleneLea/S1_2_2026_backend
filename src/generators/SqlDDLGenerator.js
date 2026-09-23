@@ -1,3 +1,4 @@
+import { largoTexto } from './RestriccionesUML.js';
 /**
  * Genera el script DDL de PostgreSQL a partir del modelo ya convertido
  * (el mismo que alimenta al generador de Spring Boot, con las claves foráneas
@@ -49,6 +50,7 @@ class SqlDDLGenerator {
     // Columna de un atributo: los textos respetan su sqlType (TEXT para text y
     // geometrías WKT, VARCHAR(n) para char/varchar), igual que @Column en la entidad
     tipoColumna(attr) {
+        if (attr.type === 'String' && largoTexto(attr) !== null) return `VARCHAR(${largoTexto(attr)})`;
         const sqlType = String(attr.sqlType || '').toUpperCase();
         if (attr.type === 'String' && /^(TEXT|VARCHAR\(\d+\))$/.test(sqlType)) return sqlType;
         return this.tipoSql(attr.type);
@@ -135,7 +137,7 @@ class SqlDDLGenerator {
                     continue;
                 }
 
-                cols.push(`    ${nombre} ${this.tipoColumna(attr)}`);
+                cols.push(`    ${nombre} ${this.tipoColumna(attr)}${attr.obligatorio !== false ? ' NOT NULL' : ''}${attr.unico ? ' UNIQUE' : ''}`);
             }
 
             cols.push(`    CONSTRAINT pk_${tabla} PRIMARY KEY (id)`);

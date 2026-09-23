@@ -50,7 +50,7 @@ const FlutterExportController = {
       const projectName = `flutter-project-${sanitizarNombreProyecto(sala.title)}-${Date.now()}`;
 
       // Convertir formato frontend -> parser interno (reusa función de CrearPaginaController)
-      const converted = CrearPaginaController.convertirFrontendADiagramParser(elements, connections);
+      const converted = CrearPaginaController.convertirFrontendADiagramParser(elements, connections, salaData.permisos ?? null);
 
       // El timestamp solo distingue la carpeta temporal; la app se llama como el tablero
       const proposito = await describirProyecto({
@@ -73,17 +73,18 @@ const FlutterExportController = {
       await CrearPaginaController.enviarZip(res, folderName, `${sanitizarNombreProyecto(sala.title)}-flutter.zip`);
     } catch (error) {
       console.error('❌ Error exportando Flutter desde sala:', error?.message || error);
+      if (error?.code === 'PERMISOS_INVALIDOS') return response(res, 400, { error: error.message });
       return response(res, 500, { error: 'No se pudo generar el proyecto Flutter. Revisa que las clases tengan nombre y atributos válidos e intenta de nuevo.' });
     }
   },
 
   // Genera un proyecto Flutter a partir del payload (elements, connections) enviado en body
   exportarConPayload: async (req, res) => {
-    const { elements, connections } = req.body || {};
+    const { elements, connections, permisos } = req.body || {};
     if (!elements || elements.length === 0) return response(res, 400, { error: 'El diagrama no tiene clases: agrega al menos una para generar la app Flutter.' });
     try {
       const projectName = `flutter-project-${Date.now()}`;
-      const converted = CrearPaginaController.convertirFrontendADiagramParser(elements, connections || []);
+      const converted = CrearPaginaController.convertirFrontendADiagramParser(elements, connections || [], permisos ?? null);
   const builder = new FlutterProjectBuilder(projectName, JSON.stringify(converted), rutaBase);
   console.log('🚀 Iniciando generación de proyecto Flutter con FlutterProjectBuilder...');
   await builder.build();
@@ -93,6 +94,7 @@ const FlutterExportController = {
   await CrearPaginaController.enviarZip(res, folderName);
     } catch (error) {
       console.error('❌ Error generando proyecto Flutter:', error?.message || error);
+      if (error?.code === 'PERMISOS_INVALIDOS') return response(res, 400, { error: error.message });
       return response(res, 500, { error: 'No se pudo generar el proyecto Flutter. Intenta de nuevo en unos segundos.' });
     }
   }

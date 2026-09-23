@@ -1,0 +1,9 @@
+{
+  "nodes": [
+    { "id": "agenda", "type": "classNode", "position": { "x": 0, "y": 0 }, "data": { "className": "Agenda", "attributes": ["id: int", "nombre: string", "fecha: Date", "creadaEn: LocalDateTime", "hora: string", "recordatorio: LocalDateTime {0..1}", "horaFin: LocalTime {0..1}"], "methods": [] } },
+    { "id": "evento", "type": "classNode", "position": { "x": 450, "y": 0 }, "data": { "className": "Evento", "attributes": ["id: int", "titulo: string", "inicio: LocalDateTime", "fin: LocalDateTime", "fechaLimite: LocalDate {0..1}", "hora: string"], "methods": [] } }
+  ],
+  "edges": [
+    { "id": "agenda-evento", "source": "agenda", "target": "evento", "type": "umlEdge", "data": { "type": "Composition", "startLabel": "1", "endLabel": "*" } }
+  ]
+}

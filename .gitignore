@@ -87,5 +87,6 @@ public/uploads/
 # Frontend clonado y compilado durante el build de Render (ver render.yaml)
 .frontend/
 
-# Carpeta de notas de correcciones: se queda solo en local
-correcciones/
+# Las notas quedan locales; la batería usada por npm sí se versiona.
+correcciones/*
+!correcciones/pruebas/

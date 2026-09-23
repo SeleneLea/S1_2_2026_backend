@@ -7,7 +7,16 @@
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test correcciones/pruebas/generacion.test.mjs correcciones/pruebas/permisos.test.mjs",
+    "pruebas:generar": "node correcciones/pruebas/generar-local.mjs",
+    "pruebas:exportar": "node correcciones/pruebas/generar-local.mjs",
+    "pruebas:backend": "node correcciones/pruebas/verificar-proyectos.mjs backend",
+    "pruebas:flutter": "node correcciones/pruebas/verificar-proyectos.mjs flutter",
+    "pruebas:integracion": "node correcciones/pruebas/verificar-proyectos.mjs integracion",
+    "pruebas:contrato": "node correcciones/pruebas/verificar-proyectos.mjs integracion --con-flutter relaciones-opcionales",
+    "pruebas:bootstrap": "node correcciones/pruebas/verificar-proyectos.mjs integracion --bootstrap permisos",
+    "pruebas": "npm test && npm run pruebas:generar && npm run pruebas:backend && npm run pruebas:flutter",
+    "pruebas:completas": "npm run pruebas && npm run pruebas:integracion -- --con-flutter && npm run pruebas:bootstrap"
   },
   "keywords": [],
   "author": "",

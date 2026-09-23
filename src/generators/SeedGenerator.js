@@ -1,3 +1,4 @@
+import { largoTexto } from './RestriccionesUML.js';
 /**
  * Datos de ejemplo en el proyecto generado.
  *
@@ -121,24 +122,48 @@ const fechaPara = (campo, i) => {
  * Recorta el texto al largo que declara la columna: la entidad lleva @Size(max = N) y un
  * varchar(10) rechazaría "Descripción de ejemplo 1" al arrancar.
  */
-const recortar = (texto, attr) => {
-    const sql = String(attr.sqlType || '');
-    if (/^TEXT$/i.test(sql)) return texto;
-    const largo = Number((sql.match(/\d+/) || [255])[0]);
-    return texto.length > largo ? texto.slice(0, largo) : texto;
+const recortar = (texto, attr, i) => {
+    const largo = largoTexto(attr);
+    let valor = texto.padEnd(attr.minimo ?? 0, 'x');
+    if (attr.unico) valor = String(i + 1) + valor;
+    return largo === null ? valor : valor.slice(0, largo);
 };
+const ajustarNumero = (valor, attr, i) => {
+    const entero = ['Integer', 'Long'].includes(attr.type);
+    const minimo = entero ? Math.ceil(attr.minimo ?? -Infinity) : (attr.minimo ?? -Infinity);
+    const maximo = entero ? Math.floor(attr.maximo ?? Infinity) : (attr.maximo ?? Infinity);
+    if (attr.unico) {
+        const paso = entero ? 1 : 0.01;
+        const nuevo = Number.isFinite(minimo) ? minimo + i * paso
+            : Number.isFinite(maximo) ? maximo - i * paso : i + 1;
+        return nuevo;
+    }
+    return Math.max(minimo, Math.min(maximo, Number(valor)));
+};
+
+// Un rango único de dos valores no admite tres registros de ejemplo.
+const cantidadPosible = (atributos, usados) => atributos.reduce((cantidad, attr) => {
+    if (!attr.unico) return cantidad;
+    const consumidos = usados.get(attr) || 0;
+    if (attr.type === 'Boolean') return Math.min(cantidad, Math.max(0, 2 - consumidos));
+    if (attr.minimo == null || attr.maximo == null || attr.type === 'String') return cantidad;
+    const entero = ['Integer', 'Long'].includes(attr.type);
+    const disponibles = entero ? Math.floor(attr.maximo) - Math.ceil(attr.minimo) + 1
+        : Math.floor((attr.maximo - attr.minimo) * 100 + 0.000001) + 1;
+    return Math.min(cantidad, Math.max(0, disponibles - consumidos));
+}, CANTIDAD);
 
 /** Valor de ejemplo para un campo suelto. Devuelve null si el tipo no se sabe sembrar. */
 const valorLiteral = (attr, tipoJava, i, contexto) => {
     const campo = sinTildes(attr.name).toLowerCase();
     switch (tipoJava) {
-        case 'String': return textoJava(recortar(textoPara(campo, i, contexto), attr));
-        case 'Integer': return String(enteroPara(campo, i));
-        case 'Long': return `${enteroPara(campo, i)}L`;
-        case 'Double': return decimalPara(campo, i);
-        case 'Float': return `${decimalPara(campo, i)}f`;
-        case 'BigDecimal': return `new BigDecimal("${decimalPara(campo, i)}")`;
-        case 'Boolean': return i % 3 === 2 ? 'false' : 'true';
+        case 'String': return textoJava(recortar(textoPara(campo, i, contexto), attr, i));
+        case 'Integer': return String(ajustarNumero(enteroPara(campo, i), attr, i));
+        case 'Long': return `${ajustarNumero(enteroPara(campo, i), attr, i)}L`;
+        case 'Double': return `${ajustarNumero(decimalPara(campo, i), attr, i)}d`;
+        case 'Float': return `${ajustarNumero(decimalPara(campo, i), attr, i)}f`;
+        case 'BigDecimal': return `new BigDecimal("${ajustarNumero(decimalPara(campo, i), attr, i)}")`;
+        case 'Boolean': return (attr.unico ? i % 2 === 1 : i % 3 === 2) ? 'false' : 'true';
         case 'LocalDate': return fechaPara(campo, i);
         case 'LocalDateTime': return `LocalDateTime.now().minusDays(${i + 1})`;
         case 'LocalTime': return `LocalTime.of(${8 + i}, 30)`;
@@ -211,9 +236,11 @@ const esSembrable = (entidad) => {
     return claves.length === 1 && !claves[0].isForeignKey;
 };
 
-export const datosDemo = (nombreApp, entidades, relaciones = []) => {
+export const datosDemo = (nombreApp, entidades, relaciones = [], catalogo = entidades) => {
     const sembrables = (entidades || []).filter(esSembrable);
-    const generador = new EntityGenerator(entidades, relaciones);
+    const generador = new EntityGenerator(catalogo, relaciones);
+    // Las hijas escriben en la misma tabla del padre: sus valores únicos también se comparten.
+    const valoresUnicosUsados = new WeakMap();
     const orden = ordenarPorDependencias(sembrables);
     const listaDe = new Map();      // nombre de clase -> variable con la lista ya guardada
     const repositorios = [];        // [{ tipo, variable }]
@@ -244,7 +271,8 @@ export const datosDemo = (nombreApp, entidades, relaciones = []) => {
 
         const objetos = [];
         const lineas = [];
-        for (let i = 0; i < CANTIDAD; i += 1) {
+        const cantidad = cantidadPosible(propios, valoresUnicosUsados);
+        for (let i = 0; i < cantidad; i += 1) {
             const objeto = `${base}${i + 1}`;
             objetos.push(objeto);
             lineas.push(`        ${clase} ${objeto} = new ${clase}();`);
@@ -254,8 +282,10 @@ export const datosDemo = (nombreApp, entidades, relaciones = []) => {
             }
             propios.forEach((attr) => {
                 const tipo = generador.mapTypeToJava(attr.type);
-                const valor = valorLiteral(attr, tipo, i, contexto);
+                const indice = attr.unico ? valoresUnicosUsados.get(attr) || 0 : i;
+                const valor = valorLiteral(attr, tipo, indice, contexto);
                 if (valor === null) return;
+                if (attr.unico) valoresUnicosUsados.set(attr, indice + 1);
                 tiposUsados.add(tipo);
                 lineas.push(`        ${objeto}.set${capitalizar(aCamel(attr.name))}(${valor});`);
             });

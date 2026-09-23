@@ -1,3 +1,5 @@
+import { restriccionesDe } from '../generators/RestriccionesUML.js';
+import { extraerPermisos } from '../generators/Permisos.js';
 import path from 'path';
 import fs from 'fs';
 import archiver from 'archiver';
@@ -79,9 +81,10 @@ class CrearPaginaController {
     }
   };
 
-  convertirFrontendADiagramParser = (elements, connections = []) => {
+  convertirFrontendADiagramParser = (elements, connections = [], permisosCrudos = null) => {
+    const politica = extraerPermisos(elements, connections, permisosCrudos);
     const convertedElements = {};
-    (elements || []).forEach(node => {
+    politica.elementos.forEach(node => {
       // Accept frontend nodes which may use 'classNode' and store data under node.data
       const isClassLike = node.type === 'class' || node.type === 'classNode' || (node.data && node.data.className);
       if (isClassLike) {
@@ -90,7 +93,7 @@ class CrearPaginaController {
         const processedAttributes = (rawAttributes || []).map(attr => {
           if (typeof attr === 'string') {
             // Notacion UML 2.5: [+|-|#|~] nombre: Tipo [= valor]
-            const bruto = String(attr).trim();
+            const { limpio: bruto, reglas } = restriccionesDe(attr);
             const simbolo = (bruto.match(/^([+\-#~])/) || [])[1];
             const visibility = this.getVisibilityFromSymbol(simbolo || '-');
             let cuerpo = bruto.replace(/^([+\-#~])?\s*/, '');
@@ -111,14 +114,20 @@ class CrearPaginaController {
             const type = this.mapJavaType(tipoDiagrama);
             // text y geometrías -> TEXT, char -> VARCHAR(1): columna y validación lo respetan
             const sqlType = this.sqlTypeDe(tipoDiagrama);
-            return { name, type, sqlType, visibility, defaultValue, isPrimaryKey: esClave };
+            return { name, type, sqlType, visibility, defaultValue, isPrimaryKey: esClave, ...reglas };
           }
-          const esClavePrimaria = attr.isPrimaryKey === true || (attr.name && attr.name.toLowerCase() === 'id');
+          const nombreLimpio = restriccionesDe(attr.name);
+          const tipoLimpio = restriccionesDe(attr.type);
+          const { reglas } = restriccionesDe(`${attr.name || ''} ${attr.type || ''}`);
+          const esClavePrimaria = attr.isPrimaryKey === true || nombreLimpio.limpio.toLowerCase() === 'id';
           return {
-            name: attr.name || 'field',
+            ...reglas,
+            ...Object.fromEntries(['obligatorio', 'unico', 'minimo', 'maximo', 'etiqueta', 'oculto', 'orden', 'principal'].filter(k => attr[k] !== undefined).map(k => [k, attr[k]])),
+            name: nombreLimpio.limpio || 'field',
             // Un id sin tipo es la clave numérica que genera la base de datos
-            type: attr.type || (esClavePrimaria ? 'Long' : 'String'),
-            sqlType: attr.sqlType || null,
+            type: this.mapJavaType(tipoLimpio.limpio || (esClavePrimaria ? 'Long' : 'String')),
+            sqlType: attr.sqlType || this.sqlTypeDe(tipoLimpio.limpio),
+            defaultValue: attr.defaultValue,
             visibility: attr.visibility || 'private',
             isStatic: attr.isStatic || false,
             isPrimaryKey: esClavePrimaria,
@@ -151,8 +160,9 @@ class CrearPaginaController {
     });
 
     const convertedConnections = {};
-    (connections || []).forEach((edge, idx) => {
+    politica.conexiones.forEach((edge, idx) => {
       if (!edge.source || !edge.target) return;
+      if (!convertedElements[edge.source] || !convertedElements[edge.target]) return;
       const d = edge.data || {};
 
       // Ignorar conexiones internas de la UI (linea punteada de clase de asociacion,
@@ -178,7 +188,7 @@ class CrearPaginaController {
     this.derivarClavesForaneas(convertedElements, convertedConnections);
     this.alinearClavesDeHerencia(convertedElements, convertedConnections);
 
-    return { elements: convertedElements, connections: convertedConnections };
+    return { elements: convertedElements, connections: convertedConnections, permisos: politica.permisosCrudos };
   };
 
   // Inserta atributos FK segun la cardinalidad de cada relacion:
@@ -368,7 +378,7 @@ class CrearPaginaController {
       const projectName = `spring-boot-${sanitizarNombreProyecto(sala.title)}-${Date.now()}`;
       const dbName = nombreBaseDatos(sala.title);
 
-      const converted = this.convertirFrontendADiagramParser(elements, connections);
+      const converted = this.convertirFrontendADiagramParser(elements, connections, salaData.permisos ?? null);
       // De qué trata el sistema: el asistente del proyecto generado lo usa como contexto
       const proposito = await describirProyecto({
         titulo: sala.title,
@@ -393,6 +403,7 @@ class CrearPaginaController {
       await this.enviarZip(res, projectName, `${sanitizarNombreProyecto(sala.title)}-spring-boot.zip`);
     } catch (error) {
       console.error('❌ Error exportando Spring Boot desde sala:', error?.message || error);
+      if (error?.code === 'PERMISOS_INVALIDOS') return response(res, 400, { error: error.message });
       return response(res, 500, { error: 'No se pudo generar el proyecto Spring Boot. Revisa que las clases tengan nombre y atributos válidos e intenta de nuevo.' });
     }
   };
@@ -422,7 +433,7 @@ class CrearPaginaController {
 
       if (elements.length === 0) return response(res, 400, { error: 'El diagrama no tiene clases: agrega al menos una para generar el script SQL.' });
 
-      const converted = this.convertirFrontendADiagramParser(elements, connections);
+      const converted = this.convertirFrontendADiagramParser(elements, connections, salaData.permisos ?? null);
       const dbName = nombreBaseDatos(sala.title);
       const ddl = new SqlDDLGenerator(converted, dbName).generate();
 
@@ -432,6 +443,7 @@ class CrearPaginaController {
       return res.send(ddl);
     } catch (error) {
       console.error('❌ Error exportando SQL:', error?.message || error);
+      if (error?.code === 'PERMISOS_INVALIDOS') return response(res, 400, { error: error.message });
       return response(res, 500, { error: 'No se pudo generar el script SQL. Revisa que las clases tengan nombre y atributos válidos e intenta de nuevo.' });
     }
   };

@@ -1,3 +1,6 @@
+import { nombreLibre, aSnake, rutaEntidad, renombrarInfraestructura } from './NombresReservados.js';
+import { permisosDe, aplicarPermisos } from './Permisos.js';
+import { archivosAutorizacion } from './AutorizacionGenerator.js';
 import path from 'path';
 import fs from 'fs';
 import { rm } from 'fs/promises';
@@ -8,7 +11,7 @@ import DiagramParser from './DiagramParser.js';
 import MetadataBuilder from './MetadataBuilder.js';
 import { controladorAsistente, propiedadesAsistente, servicioAsistente } from './AsistenteGenerator.js';
 import {
-    controladorAuth, detectarRoles, entidadUsuario, filtroAuth, propiedadesAuth, repositorioUsuario, servicioAuth
+    controladorAuth, controladorCuentas, detectarRoles, entidadUsuario, filtroAuth, propiedadesAuth, repositorioUsuario, servicioAuth
 } from './AuthGenerator.js';
 import { datosDemo, propiedadesDemo } from './SeedGenerator.js';
 import EntityGenerator from './EntityGenerator.js';
@@ -48,6 +51,34 @@ class SpringBootProjectBuilder {
 
     async build() {
         this.parsedDiagram = this.diagramParser.parse(this.xmlString);
+        this.politica = permisosDe(this.parsedDiagram.entities, this.parsedDiagram.relationships, this.parsedDiagram.permisosCrudos);
+        aplicarPermisos(this.parsedDiagram.entities, this.parsedDiagram.relationships, this.politica);
+        const entidadesDiagrama = [...this.parsedDiagram.entities, ...(this.parsedDiagram.manyToManyTables || [])];
+        const todas = [...entidadesDiagrama];
+        this.avisos = [];
+        if (!this.politica.explicito) this.avisos.push('Sin política Permisos: compatibilidad con lectura de todos los módulos y registros. La tabla deducida está en el README; declara permisos para limitar el acceso.');
+        const reservar = base => {
+            const nombre = nombreLibre(base, todas);
+            todas.push({ name: nombre });
+            if (nombre !== base) this.avisos.push(`${base} de infraestructura se generó como ${nombre}; se conservó la clase del diagrama.`);
+            return nombre;
+        };
+        this.claseCuenta = reservar('Usuario');
+        this.claseAuth = reservar('Auth');
+        this.claseAsistente = reservar('Asistente');
+        this.claseCuentas = reservar('Cuentas');
+        this.claseDatosDemo = reservar('DatosDemo');
+        this.nombresInfra = {
+            Usuario: this.claseCuenta, UsuarioRepository: `${this.claseCuenta}Repository`,
+            AuthService: `${this.claseAuth}Service`, AuthController: `${this.claseAuth}Controller`,
+            AsistenteService: `${this.claseAsistente}Service`, AsistenteController: `${this.claseAsistente}Controller`,
+            CuentasController: `${this.claseCuentas}Controller`
+        };
+        if (this.claseCuenta !== 'Usuario') this.avisos.push(`La cuenta de acceso usa la tabla ${aSnake(this.claseCuenta)}; las tablas del diagrama se conservan.`);
+        for (const entidad of entidadesDiagrama) {
+            if (rutaEntidad(entidad.name).startsWith('entidades/')) this.avisos.push(`API de ${entidad.name}: /api/${rutaEntidad(entidad.name)}, para conservar las rutas de infraestructura.`);
+        }
+        this.archivosEscritos = new Set();
         const metadataBuilder = new MetadataBuilder(
             this.parsedDiagram.entities,
             this.parsedDiagram.relationships
@@ -86,25 +117,45 @@ class SpringBootProjectBuilder {
         this.copyMavenWrapper();
     }
 
+    escribirNuevo(ruta, contenido) {
+        const absoluta = path.resolve(ruta);
+        const clave = absoluta.toLowerCase();
+        if (this.archivosEscritos.has(clave) || fs.existsSync(absoluta)) {
+            throw new Error(`Dos generadores intentaron escribir ${path.basename(ruta)}. Revisa los nombres del diagrama.`);
+        }
+        fs.mkdirSync(path.dirname(absoluta), { recursive: true });
+        fs.writeFileSync(absoluta, contenido, { encoding: 'utf8', flag: 'wx' });
+        this.archivosEscritos.add(clave);
+    }
+
+    escribirInfra(ruta, contenido) {
+        const archivo = renombrarInfraestructura(path.basename(ruta), this.nombresInfra);
+        let texto = renombrarInfraestructura(contenido, this.nombresInfra);
+        texto = texto.replace('@Table(name = "usuario",', `@Table(name = "${aSnake(this.claseCuenta)}",`);
+        this.escribirNuevo(path.join(path.dirname(ruta), archivo), texto);
+    }
+
     /**
      * Inicio de sesión con roles: los roles salen de las clases de personas del diagrama
      * (Cliente, Entrenador, Médico…). Todos consultan; solo los de gestión modifican datos.
      */
     generateAutenticacion() {
-        const roles = detectarRoles(this.entidadesConcretas);
+        const roles = this.politica.roles;
         this.rolesDelSistema = roles;
         const base = path.join(this.projectPath, 'src/main/java/com/example/demo');
         const archivos = [
-            ['entities/Usuario.java', entidadUsuario()],
+            ['entities/Usuario.java', entidadUsuario(this.politica)],
             ['repositories/UsuarioRepository.java', repositorioUsuario()],
-            ['services/AuthService.java', servicioAuth(roles)],
-            ['controllers/AuthController.java', controladorAuth()],
-            ['config/AuthFiltro.java', filtroAuth()],
+            ['services/AuthService.java', servicioAuth(roles, this.politica)],
+            ['controllers/AuthController.java', controladorAuth(this.politica)],
+            ['config/AuthFiltro.java', filtroAuth(this.politica)],
+            ['controllers/CuentasController.java', controladorCuentas(this.politica)],
         ];
+        if (this.politica.explicito) archivos.push(...Object.entries(archivosAutorizacion(this.politica, this.entidadesConcretas)));
         for (const [relativo, contenido] of archivos) {
             const destino = path.join(base, relativo);
             fs.mkdirSync(path.dirname(destino), { recursive: true });
-            fs.writeFileSync(destino, contenido);
+            this.escribirInfra(destino, contenido);
         }
         const propiedades = path.join(this.projectPath, 'src/main/resources/application.properties');
         if (fs.existsSync(propiedades)) fs.appendFileSync(propiedades, propiedadesAuth(roles));
@@ -120,11 +171,11 @@ class SpringBootProjectBuilder {
         const controladores = path.join(this.projectPath, 'src/main/java/com/example/demo/controllers');
         fs.mkdirSync(servicios, { recursive: true });
         fs.mkdirSync(controladores, { recursive: true });
-        fs.writeFileSync(
+        this.escribirInfra(
             path.join(servicios, 'AsistenteService.java'),
             servicioAsistente(this.nombreProyecto, this.entidadesConcretas, this.parsedDiagram.relationships, this.proposito)
         );
-        fs.writeFileSync(
+        this.escribirInfra(
             path.join(controladores, 'AsistenteController.java'),
             controladorAsistente(this.nombreProyecto)
         );
@@ -143,9 +194,13 @@ class SpringBootProjectBuilder {
     generateDatosDemo() {
         const configuracion = path.join(this.projectPath, 'src/main/java/com/example/demo/config');
         fs.mkdirSync(configuracion, { recursive: true });
-        fs.writeFileSync(
-            path.join(configuracion, 'DatosDemo.java'),
-            datosDemo(this.nombreProyecto, this.entidadesConcretas, this.parsedDiagram.relationships)
+        this.escribirNuevo(
+            path.join(configuracion, `${this.claseDatosDemo}.java`),
+            datosDemo(this.nombreProyecto, this.entidadesConcretas, this.parsedDiagram.relationships, this.parsedDiagram.entities)
+                .replace('public class DatosDemo implements', `public class ${this.claseDatosDemo} implements`)
+                .replace('public DatosDemo(', `public ${this.claseDatosDemo}(`)
+                .replace('import com.example.demo.entities.*;', this.parsedDiagram.entities
+                    .map(e => `import com.example.demo.entities.${e.name};`).join('\n'))
         );
         const propiedades = path.join(this.projectPath, 'src/main/resources/application.properties');
         if (fs.existsSync(propiedades)) fs.appendFileSync(propiedades, propiedadesDemo());
@@ -178,8 +233,14 @@ class SpringBootProjectBuilder {
     }
 
     async cleanDirectory() {
-        if (fs.existsSync(this.projectPath)) {
-            await rm(this.projectPath, { recursive: true, force: true });
+        const base = path.resolve(this.rutaBase);
+        const destino = path.resolve(this.projectPath);
+        const relativa = path.relative(base, destino);
+        if (!relativa || relativa.startsWith('..') || path.isAbsolute(relativa)) {
+            throw new Error('La carpeta del proyecto debe estar dentro de la carpeta de exportaciones.');
+        }
+        if (fs.existsSync(destino)) {
+            await rm(destino, { recursive: true, force: true });
         }
     }
 
@@ -297,7 +358,7 @@ class SpringBootProjectBuilder {
     </build>
 </project>
 `;
-        fs.writeFileSync(path.join(this.projectPath, 'pom.xml'), pom);
+        this.escribirNuevo(path.join(this.projectPath, 'pom.xml'), pom);
     }
 
     generateApplicationProperties() {
@@ -375,7 +436,7 @@ spring.validation.enabled=true
 
 spring.transaction.default-timeout=30
 `;
-        fs.writeFileSync(
+        this.escribirNuevo(
             path.join(this.projectPath, 'src/main/resources/application.properties'),
             props
         );
@@ -422,7 +483,7 @@ logging:
     org.springframework.web: DEBUG
     org.hibernate.SQL: DEBUG
 `;
-        fs.writeFileSync(
+        this.escribirNuevo(
             path.join(this.projectPath, 'src/main/resources/application.yml.example'),
             yml
         );
@@ -437,7 +498,7 @@ logging:
         const entities = entityGenerator.generateAll();
         const entitiesPath = path.join(this.projectPath, 'src/main/java/com/example/demo/entities');
         entities.forEach(entity => {
-            fs.writeFileSync(path.join(entitiesPath, entity.name), entity.content);
+            this.escribirNuevo(path.join(entitiesPath, entity.name), entity.content);
         });
     }
 
@@ -448,71 +509,86 @@ logging:
         const generated = mmGenerator.generateAll();
         const entitiesPath = path.join(this.projectPath, 'src/main/java/com/example/demo/entities');
         generated.forEach(tbl => {
-            fs.writeFileSync(path.join(entitiesPath, tbl.name), tbl.content);
+            this.escribirNuevo(path.join(entitiesPath, tbl.name), tbl.content);
         });
     }
 
     generateDTOs() {
         const dtoGenerator = new DTOGenerator(
-            this.entidadesConcretas,
+            this.parsedDiagram.entities,
             this.parsedDiagram.relationships
         );
         const dtos = dtoGenerator.generateAll();
         const dtoPath = path.join(this.projectPath, 'src/main/java/com/example/demo/dto');
         dtos.forEach(dto => {
-            fs.writeFileSync(path.join(dtoPath, dto.name), dto.content);
+            this.escribirNuevo(path.join(dtoPath, dto.name), dto.content);
         });
     }
 
     generateRepositories() {
         const repoGenerator = new RepositoryGenerator(
-            this.entidadesConcretas,
+            this.parsedDiagram.entities,
             this.parsedDiagram.relationships,
             this.metadata
         );
-        const repositories = repoGenerator.generateAll();
+        // Los padres abstractos con herencia JOINED son entidades JPA consultables.
+        // También hacen falta sus repositorios para resolver referencias al padre.
+        // Una abstracta aislada es @MappedSuperclass y no admite JpaRepository.
+        const entityGenerator = new EntityGenerator(this.parsedDiagram.entities, this.parsedDiagram.relationships);
+        const repositories = this.parsedDiagram.entities
+            .filter(e => !(e.isAbstract || e.stereotype === 'abstract') || entityGenerator.isParentInInheritance(e.id))
+            .map(e => ({ name: `${e.name}Repository.java`, content: repoGenerator.generateRepository(e) }));
         const repoPath = path.join(this.projectPath, 'src/main/java/com/example/demo/repositories');
         repositories.forEach(repo => {
-            fs.writeFileSync(path.join(repoPath, repo.name), repo.content);
+            this.escribirNuevo(path.join(repoPath, repo.name), repo.content);
         });
     }
 
     generateServices() {
         const serviceGenerator = new ServiceGenerator(
-            this.entidadesConcretas,
+            this.parsedDiagram.entities,
             this.parsedDiagram.relationships,
-            this.metadata
+            this.metadata,
+            this.politica
         );
-        const services = serviceGenerator.generateAll();
+        const services = this.entidadesConcretas.flatMap(e => [
+            { name: `${e.name}Service.java`, content: serviceGenerator.generateServiceInterface(e) },
+            { name: `${e.name}ServiceImpl.java`, content: serviceGenerator.generateServiceImplementation(e) }
+        ]);
         const servicePath = path.join(this.projectPath, 'src/main/java/com/example/demo/services');
         services.forEach(service => {
-            fs.writeFileSync(path.join(servicePath, service.name), service.content);
+            this.escribirNuevo(path.join(servicePath, service.name), service.content);
         });
     }
 
     generateControllers() {
         const controllerGenerator = new ControllerGenerator(
-            this.entidadesConcretas,
+            this.parsedDiagram.entities,
             this.parsedDiagram.relationships,
-            this.metadata
+            this.metadata,
+            this.politica
         );
-        const controllers = controllerGenerator.generateAll();
+        const controllers = this.entidadesConcretas.map(e => ({
+            name: `${e.name}Controller.java`, content: controllerGenerator.generateController(e)
+        }));
         const controllerPath = path.join(this.projectPath, 'src/main/java/com/example/demo/controllers');
         controllers.forEach(controller => {
-            fs.writeFileSync(path.join(controllerPath, controller.name), controller.content);
+            this.escribirNuevo(path.join(controllerPath, controller.name), controller.content);
         });
     }
 
     generateMappers() {
         const mapperGenerator = new MapperGenerator(
-            this.entidadesConcretas,
+            this.parsedDiagram.entities,
             this.parsedDiagram.relationships,
             this.metadata
         );
-        const mappers = mapperGenerator.generateAll();
+        const mappers = this.entidadesConcretas.map(e => ({
+            name: `${e.name}Mapper.java`, content: mapperGenerator.generateMapper(e)
+        }));
         const mapperPath = path.join(this.projectPath, 'src/main/java/com/example/demo/mappers');
         mappers.forEach(mapper => {
-            fs.writeFileSync(path.join(mapperPath, mapper.name), mapper.content);
+            this.escribirNuevo(path.join(mapperPath, mapper.name), mapper.content);
         });
     }
 
@@ -587,7 +663,7 @@ public class CorsConfig {
 `;
 
         const configPath = path.join(this.projectPath, 'src/main/java/com/example/demo/config');
-        fs.writeFileSync(path.join(configPath, 'CorsConfig.java'), corsConfig);
+        this.escribirNuevo(path.join(configPath, 'CorsConfig.java'), corsConfig);
     }
 
     generateWebConfig() {
@@ -611,7 +687,7 @@ public class WebConfig implements WebMvcConfigurer {
 `;
 
         const configPath = path.join(this.projectPath, 'src/main/java/com/example/demo/config');
-        fs.writeFileSync(path.join(configPath, 'WebConfig.java'), webConfig);
+        this.escribirNuevo(path.join(configPath, 'WebConfig.java'), webConfig);
     }
 
     generateGlobalExceptionHandler() {
@@ -712,10 +788,10 @@ public class GlobalExceptionHandler {
 }
 `;
         const exceptionsPath = path.join(this.projectPath, 'src/main/java/com/example/demo/exceptions');
-        fs.writeFileSync(path.join(exceptionsPath, 'GlobalExceptionHandler.java'), exceptionHandler);
+        this.escribirNuevo(path.join(exceptionsPath, 'GlobalExceptionHandler.java'), exceptionHandler);
 
         // Excepción de "no encontrado": servicios y controladores responden 404 con ella
-        fs.writeFileSync(path.join(exceptionsPath, 'RecursoNoEncontradoException.java'), `package com.example.demo.exceptions;
+        this.escribirNuevo(path.join(exceptionsPath, 'RecursoNoEncontradoException.java'), `package com.example.demo.exceptions;
 
 /**
  * Se lanza cuando un registro, o una entidad referenciada por una clave foránea,
@@ -731,7 +807,7 @@ public class RecursoNoEncontradoException extends RuntimeException {
 
         // Compatibilidad del servidor web: en algunos Windows Java no puede abrir el
         // Selector de NIO y Tomcat no arranca. Se detecta y se usa el conector NIO2.
-        fs.writeFileSync(path.join(this.projectPath, 'src/main/java/com/example/demo/config/ServidorWebConfig.java'), `package com.example.demo.config;
+        this.escribirNuevo(path.join(this.projectPath, 'src/main/java/com/example/demo/config/ServidorWebConfig.java'), `package com.example.demo.config;
 
 import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactory;
 import org.springframework.boot.web.server.WebServerFactoryCustomizer;
@@ -787,7 +863,7 @@ public class DemoApplication {
     }
 }
 `;
-        fs.writeFileSync(
+        this.escribirNuevo(
             path.join(this.projectPath, 'src/main/java/com/example/demo/DemoApplication.java'),
             mainApp
         );
@@ -852,7 +928,7 @@ ${cuerpo}
 }
 `;
             }
-            fs.writeFileSync(path.join(destino, `${item.name}.java`), contenido);
+            this.escribirNuevo(path.join(destino, `${item.name}.java`), contenido);
         });
         console.log(`Generados ${aux.length} clasificadores auxiliares (interfaces/enums)`);
     }
@@ -860,8 +936,18 @@ ${cuerpo}
     generateReadme() {
         const readmeGenerator = new ReadmeGenerator();
         const readmeContent = readmeGenerator.generate(this.nombreProyecto, this.parsedDiagram.entities, this.dbName);
-        fs.writeFileSync(path.join(this.projectPath, 'README.md'), readmeContent);
+        this.escribirNuevo(path.join(this.projectPath, 'README.md'), readmeContent + '\n\n## Nombres y rutas ajustados\n\n' + (this.avisos.join('\n\n') || 'No hubo colisiones.') + '\n\n## Actualizaciones de registros\n\nPUT reemplaza todos los campos, incluidas listas vacías y valores opcionales nulos. PATCH combina los campos no nulos enviados; una lista vacía quita sus relaciones.\n');
+        this.avisos.forEach(aviso => console.warn(aviso));
+        const filas = Object.entries(this.politica.porRol).flatMap(([rol, modulos]) => Object.entries(modulos)
+            .filter(([, regla]) => regla.acciones.length && regla.alcance !== 'ninguno')
+            .map(([modulo, regla]) => `| ${rol} | ${modulo} | ${regla.acciones.join(', ')} | ${regla.alcance} | ${(regla.camino || []).join(' → ') || '—'} |`));
+        fs.appendFileSync(path.join(this.projectPath, 'README.md'), `\n## Política de permisos\n\n${this.politica.explicito
+            ? 'Política explícita del diagrama. Lo no declarado está denegado. ADMIN administra cuentas; los roles del negocio no pueden concederse permisos. El backend comprueba la cuenta actual en cada petición, incluso si el token es anterior a un cambio de rol o vínculo.'
+            : 'Compatibilidad: todos los roles consultan todos los módulos; los gestores deducidos pueden modificarlos. Para restringir módulos y registros agrega la clase Permisos o permisos en el JSON del tablero. Si no se deduce un gestor, se agrega ADMIN y no se asciende al primer rol.'}\n\n| Rol | Módulo | Acciones | Alcance | Camino |\n| --- | --- | --- | --- | --- |\n${filas.join('\n')}\n\n${this.politica.explicito
+            ? 'El registro público no acepta referenciaId: crea una cuenta pendiente. Administración debe vincularla con PUT /api/cuentas/{id}/vinculo y {"referenciaId":"ID"}, comprobando que esa persona es la titular. El servidor verifica existencia y unicidad del vínculo. Las cuentas sin vínculo no acceden a registros propios/asignados. Las demo se vinculan después de sembrar. Cambiar el rol elimina el vínculo anterior.\n\nLas listas, conteos y búsquedas aplican el alcance del servidor; un ID ajeno devuelve 403 y exists devuelve false. Crear, editar, borrar o reasignar comprueba pertenencia y relaciones. Una escritura con alcance restringido requiere que todos los titulares alcanzados sean el actual; un registro compartido entre titulares necesita administración. Los cambios de vínculos requieren ver los registros relacionados. El alcance no puede ampliarse mediante parámetros de URL.\n'
+            : ''}`);
         this.generateQuickStartGuide();
+        if (this.politica.explicito) fs.appendFileSync(path.join(this.projectPath, 'README.md'), '\n### Cuentas existentes\n\nLos vínculos anteriores quedan sin verificar: administración debe aprobarlos mediante PUT /api/cuentas/{id}/vinculo. Enviar referenciaId nulo desvincula y revoca el alcance. Si una base existente todavía no tiene ADMIN, configura AUTH_DEMO=false, AUTH_INICIAL_CORREO con un correo nuevo y AUTH_INICIAL_CLAVE para crear la cuenta administrativa. No se ascienden cuentas existentes ni se borra el dominio.\n\nLas relaciones M:N se editan desde ambos extremos cuando existe política explícita. El permiso sobre el registro y la visibilidad del relacionado permiten modificar ese enlace, sin editar los campos del otro registro. Las cascadas de borrado comprueban cada registro que JPA eliminaría.\n');
         this.generateGitignore();
     }
 
@@ -1028,7 +1114,7 @@ Ver logs en tiempo real:
 
 🔗 Documentación Spring Boot: https://spring.io/projects/spring-boot
 `;
-        fs.writeFileSync(path.join(this.projectPath, '⚠️ INICIO_RAPIDO.txt'), quickStart);
+        this.escribirNuevo(path.join(this.projectPath, '⚠️ INICIO_RAPIDO.txt'), quickStart);
     }
 
     generateGitignore() {
@@ -1087,7 +1173,7 @@ application-dev.properties
 # Spring Boot DevTools
 spring-boot-devtools.properties
 `;
-        fs.writeFileSync(path.join(this.projectPath, '.gitignore'), gitignore);
+        this.escribirNuevo(path.join(this.projectPath, '.gitignore'), gitignore);
     }
 
     generateJacksonConfig() {
@@ -1138,7 +1224,7 @@ public class JacksonConfig {
 }
 `;
         const configPath = path.join(this.projectPath, 'src/main/java/com/example/demo/config');
-        fs.writeFileSync(path.join(configPath, 'JacksonConfig.java'), jacksonConfig);
+        this.escribirNuevo(path.join(configPath, 'JacksonConfig.java'), jacksonConfig);
     }
 
     generateEntityIdDeserializer() {
@@ -1289,7 +1375,7 @@ public class EntityIdDeserializer extends JsonDeserializer<Object> {
 }
 `;
         const configPath = path.join(this.projectPath, 'src/main/java/com/example/demo/config');
-        fs.writeFileSync(path.join(configPath, 'EntityIdDeserializer.java'), deserializerCode);
+        this.escribirNuevo(path.join(configPath, 'EntityIdDeserializer.java'), deserializerCode);
     }
 
     getProjectPath() {

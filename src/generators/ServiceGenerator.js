@@ -1,3 +1,14 @@
+import { atributosListado, generarConsulta } from './ListadoGenerator.js';
+import { muchosAMuchosEditables } from './Permisos.js';
+
+// PUT reemplaza incluso con null; PATCH conserva los campos no enviados.
+// Se emite cada rama directamente para admitir cualquier identificador Java, incluidas tildes.
+const asignarCampoActualizado = (campo, modo) => modo === 'reemplazar'
+    ? `        existing.set${campo}(updated.get${campo}());\n`
+    : `        if (updated.get${campo}() != null) {
+            existing.set${campo}(updated.get${campo}());
+        }
+`;
 
 // Los metodos derivados usan los tipos de los atributos en sus firmas
 // (findByFecha(LocalDateTime), existsByPrecio(BigDecimal)...). Sin estos imports
@@ -13,10 +24,11 @@ const importsDeTipos = (entity) => {
 };
 
 class ServiceGenerator {
-    constructor(entities, relationships, metadata) {
+    constructor(entities, relationships, metadata, politica = null) {
         this.entities = entities;
         this.relationships = relationships || [];
         this.metadata = metadata;
+        this.conPermisos = politica?.explicito === true;
     }
 
     isChildInInheritance(entityId) {
@@ -55,14 +67,7 @@ class ServiceGenerator {
      * Mismo criterio que EntityGenerator, DTOGenerator y MapperGenerator.
      */
     getMuchosAMuchosPropios(entity) {
-        return this.relationships
-            .filter(rel => rel.type === 'many-to-many-direct' && rel.source === entity.id)
-            .map(rel => this.entities.find(e => e.id === rel.target))
-            .filter(Boolean)
-            .filter(otra =>
-                !entity.attributes.some(a => a.isForeignKey && a.referencedEntity === otra.name) &&
-                !otra.attributes.some(a => a.isForeignKey && a.referencedEntity === entity.name)
-            );
+        return muchosAMuchosEditables(entity, this.entities, this.relationships).map(r => r.otra);
     }
 
     generateAll() {
@@ -85,7 +90,7 @@ class ServiceGenerator {
         const isCompositeKey = this.isCompositeKey(entity);
         const customSearchMethods = this.generateCustomSearchMethods(entity);
         const relatedEntities = new Set();
-        entity.attributes
+        atributosListado(entity, this.entities, this.relationships)
             .filter(attr => attr.isForeignKey && attr.referencedEntity)
             .forEach(attr => relatedEntities.add(attr.referencedEntity));
         const relatedImports = Array.from(relatedEntities)
@@ -112,6 +117,10 @@ public interface ${entity.name}Service {
      * Obtener todos los registros
      */
     List<${entity.name}> findAll();
+
+    /** Sin página ni tamaño conserva el listado completo. Los filtros se combinan con AND. */
+    org.springframework.data.domain.Page<${entity.name}> buscar(
+        Integer pagina, Integer tamano, String texto, String orden, java.util.Map<String, String> filtros);
 
     /**
      * Buscar por ID
@@ -216,10 +225,14 @@ ${customSearchMethods}
     }
 
     generateServiceImplementation(entity) {
+        const seguro = this.conPermisos;
+        const inversas = muchosAMuchosEditables(entity, this.entities, this.relationships).filter(r => !r.propietaria);
+        const sincronizar = seguro && inversas.length > 0;
+        const exigir = accion => `this.autorizacion.comprobar("${entity.name}", "${accion}", existing);`;
         const pkType = this.getPrimaryKeyType(entity);
         const pkName = this.getPrimaryKeyName(entity);
         const relatedEntities = new Set();
-        entity.attributes
+        atributosListado(entity, this.entities, this.relationships)
             .filter(attr => attr.isForeignKey && attr.referencedEntity)
             .forEach(attr => relatedEntities.add(attr.referencedEntity));
         // El servicio necesita el repositorio del otro lado de cada muchos a muchos
@@ -234,11 +247,13 @@ ${customSearchMethods}
             .map(entityName => `    private final ${entityName}Repository ${this.toCamelCase(entityName)}Repository;`)
             .join('\n');
         const constructorParams = ['        ' + entity.name + 'Repository repository']
+            .concat(seguro ? ['        com.example.demo.config.Autorizacion autorizacion'] : [])
             .concat(Array.from(relatedEntities).map(entityName =>
                 `        ${entityName}Repository ${this.toCamelCase(entityName)}Repository`
             ))
             .join(',\n');
         const constructorAssignments = ['        this.repository = repository;']
+            .concat(seguro ? ['        this.autorizacion = autorizacion;'] : [])
             .concat(Array.from(relatedEntities).map(entityName => {
                 const repoName = this.toCamelCase(entityName) + 'Repository';
                 return `        this.${repoName} = ${repoName};`;
@@ -268,6 +283,7 @@ import java.util.stream.Collectors;
 public class ${entity.name}ServiceImpl implements ${entity.name}Service {
 
     private final ${entity.name}Repository repository;
+${seguro ? '    private final com.example.demo.config.Autorizacion autorizacion;' : ''}
 ${relatedRepositoryFields}
 
     @Autowired
@@ -279,13 +295,16 @@ ${constructorAssignments}
     @Override
     @Transactional(readOnly = true)
     public List<${entity.name}> findAll() {
-        return repository.findAll();
+        return repository.findAll(${seguro ? `this.autorizacion.alcance("${entity.name}", "ver")` : ''});
     }
+
+${generarConsulta(entity, this.entities, this.relationships, nombre => this.toCamelCase(nombre), seguro)}
 
     @Override
     @Transactional(readOnly = true)
     public Optional<${entity.name}> findById(${pkType} id) {
-        return repository.findById(id);
+${seguro ? `        this.autorizacion.alcance("${entity.name}", "ver");
+        return repository.findById(id).map(existing -> { ${exigir('ver')} return existing; });` : '        return repository.findById(id);'}
     }
 
     @Override
@@ -295,20 +314,30 @@ ${constructorAssignments}
 
         // CRÍTICO: Resolver relaciones FK antes de guardar
         resolveForeignKeys(entity);
-
-        return repository.save(entity);
+${seguro ? `        if (entity.get${this.capitalize(this.toCamelCase(pkName))}() != null && repository.existsById(entity.get${this.capitalize(this.toCamelCase(pkName))}()))
+            throw new IllegalArgumentException("Ya existe un registro con ese identificador.");
+        this.autorizacion.comprobarRelaciones(entity, java.util.Map.of());
+        this.autorizacion.comprobar("${entity.name}", "crear", entity);` : ''}
+${sincronizar ? `        ${entity.name} created = repository.save(entity);
+        sincronizarInversas(created, java.util.Map.of());
+        return created;` : '        return repository.save(entity);'}
     }
 
     @Override
     public ${entity.name} update(${pkType} id, ${entity.name} entity) {
         return repository.findById(id)
             .map(existing -> {
+${seguro ? `                ${exigir('editar')}
+                var relacionesAntes = this.autorizacion.relaciones(existing);` : ''}
+${sincronizar ? '                var inversasAntes = capturarInversas(existing);' : ''}
                 // Actualizar campos
-                updateEntityFields(existing, entity);
+                reemplazarCampos(existing, entity);
 
                 // CRÍTICO: Resolver relaciones FK antes de guardar
                 resolveForeignKeys(existing);
-
+${seguro ? `                this.autorizacion.comprobarRelaciones(existing, relacionesAntes);
+                ${exigir('editar')}` : ''}
+${sincronizar ? '                sincronizarInversas(existing, inversasAntes);' : ''}
                 return repository.save(existing);
             })
             .orElseThrow(() -> new RecursoNoEncontradoException("${entity.name} con ID " + id + " no encontrado"));
@@ -318,12 +347,17 @@ ${constructorAssignments}
     public ${entity.name} partialUpdate(${pkType} id, ${entity.name} entity) {
         return repository.findById(id)
             .map(existing -> {
+${seguro ? `                ${exigir('editar')}
+                var relacionesAntes = this.autorizacion.relaciones(existing);` : ''}
+${sincronizar ? '                var inversasAntes = capturarInversas(existing);' : ''}
                 // Actualizar solo los campos no nulos
-                updateEntityFields(existing, entity);
+                combinarCampos(existing, entity);
 
                 // CRÍTICO: Resolver relaciones FK antes de guardar
                 resolveForeignKeys(existing);
-
+${seguro ? `                this.autorizacion.comprobarRelaciones(existing, relacionesAntes);
+                ${exigir('editar')}` : ''}
+${sincronizar ? '                sincronizarInversas(existing, inversasAntes);' : ''}
                 return repository.save(existing);
             })
             .orElseThrow(() -> new RecursoNoEncontradoException("${entity.name} con ID " + id + " no encontrado"));
@@ -331,6 +365,13 @@ ${constructorAssignments}
 
     @Override
     public void delete(${pkType} id) {
+${seguro ? `        var existing = repository.findById(id).orElseThrow(() -> new RecursoNoEncontradoException("Registro no encontrado"));
+        this.autorizacion.comprobarBorrado("${entity.name}", existing);` : ''}
+${sincronizar ? `        var relacionesAntes = this.autorizacion.relaciones(existing);
+        var inversasAntes = capturarInversas(existing);
+${inversas.map(r => `        existing.set${this.capitalize(r.propiedad)}(new ArrayList<>());`).join('\n')}
+        this.autorizacion.comprobarRelaciones(existing, relacionesAntes);
+        sincronizarInversas(existing, inversasAntes);` : ''}
         if (!repository.existsById(id)) {
             throw new RecursoNoEncontradoException("${entity.name} con ID " + id + " no encontrado");
         }
@@ -340,13 +381,13 @@ ${constructorAssignments}
     @Override
     @Transactional(readOnly = true)
     public boolean existsById(${pkType} id) {
-        return repository.existsById(id);
+        return ${seguro ? `repository.exists(this.autorizacion.<${entity.name}>alcance("${entity.name}", "ver").and((raiz, consulta, cb) -> cb.equal(raiz.get("${this.toCamelCase(pkName)}"), id)))` : 'repository.existsById(id)'};
     }
 
     @Override
     @Transactional(readOnly = true)
     public long count() {
-        return repository.count();
+        return repository.count(${seguro ? `this.autorizacion.alcance("${entity.name}", "ver")` : ''});
     }
 
 ${this.generateCustomSearchImplementations(entity)}
@@ -372,14 +413,62 @@ ${this.generateFKResolutionLogic(entity)}
     /**
      * Actualizar campos de la entidad existente
      */
-    private void updateEntityFields(${entity.name} existing, ${entity.name} updated) {
-${this.generateUpdateFieldsLogic(entity)}
+    // PUT reemplaza; PATCH conserva los campos no enviados.
+    private void reemplazarCampos(${entity.name} existing, ${entity.name} updated) {
+${this.generateUpdateFieldsLogic(entity, { modo: 'reemplazar' })}
     }
+
+    private void combinarCampos(${entity.name} existing, ${entity.name} updated) {
+${this.generateUpdateFieldsLogic(entity, { modo: 'combinar' })}
+    }
+${sincronizar ? this.generateSincronizarInversas(entity, inversas) : ''}
 }
 `;
     }
 
-    generateUpdateFieldsLogic(entity) {
+    generateSincronizarInversas(entity, inversas) {
+        const getterId = 'get' + this.capitalize(this.toCamelCase(this.getPrimaryKeyName(entity)));
+        return `
+    /** Guarda los vínculos anteriores antes de reemplazar las colecciones del DTO. */
+    private java.util.Map<String, List<?>> capturarInversas(${entity.name} entity) {
+        java.util.Map<String, List<?>> resultado = new java.util.HashMap<>();
+${inversas.map(r => `        resultado.put("${r.propiedad}", entity.get${this.capitalize(r.propiedad)}() == null ? List.of() : new ArrayList<>(entity.get${this.capitalize(r.propiedad)}()));`).join('\n')}
+        return resultado;
+    }
+
+    /**
+     * La política autoriza el registro y las relaciones antes de llegar aquí.
+     * Solo cambia el enlace de este registro en el lado propietario; sus campos
+     * escalares se conservan. Todos los objetos están gestionados en la misma
+     * transacción, por lo que una denegación revierte también estas asociaciones.
+     */
+    private void sincronizarInversas(${entity.name} entity, java.util.Map<String, List<?>> anteriores) {
+${inversas.map(r => {
+            const otra = r.otra;
+            const getterOtraId = 'get' + this.capitalize(this.toCamelCase(this.getPrimaryKeyName(otra)));
+            const cap = this.capitalize(r.propiedad);
+            const owner = this.capitalize(r.propiedadPropietaria);
+            const variable = this.toCamelCase(otra.name);
+            return `        List<${otra.name}> ${variable}Actuales = entity.get${cap}() == null ? List.of() : entity.get${cap}();
+        for (Object previo : anteriores.getOrDefault("${r.propiedad}", List.of())) {
+            ${otra.name} anterior = (${otra.name}) previo;
+            boolean conserva = ${variable}Actuales.stream().anyMatch(actual -> java.util.Objects.equals(actual.${getterOtraId}(), anterior.${getterOtraId}()));
+            if (!conserva && anterior.get${owner}() != null) {
+                anterior.get${owner}().removeIf(vinculado -> java.util.Objects.equals(vinculado.${getterId}(), entity.${getterId}()));
+            }
+        }
+        for (${otra.name} actual : ${variable}Actuales) {
+            if (actual.get${owner}() == null) actual.set${owner}(new ArrayList<>());
+            boolean existe = actual.get${owner}().stream().anyMatch(vinculado -> java.util.Objects.equals(vinculado.${getterId}(), entity.${getterId}()));
+            if (!existe) actual.get${owner}().add(entity);
+        }
+`;
+        }).join('\n')}
+    }
+`;
+    }
+
+    generateUpdateFieldsLogic(entity, { modo = 'combinar' } = {}) {
         let updates = '';
         const entityMeta = this.metadata ? this.metadata.get(entity.name) : null;
         if (!entityMeta) {
@@ -394,19 +483,13 @@ ${this.generateUpdateFieldsLogic(entity)}
                     const hasGetter = entityMeta.entity.getters.includes(`get${capitalizedName}`);
                     const hasSetter = entityMeta.entity.setters.includes(`set${capitalizedName}`);
                     if (hasGetter && hasSetter) {
-                        updates += `        if (updated.get${capitalizedName}() != null) {
-            existing.set${capitalizedName}(updated.get${capitalizedName}());
-        }
-`;
+                        updates += asignarCampoActualizado(capitalizedName, modo);
                     } else {
                         console.warn(`⚠️  ${entity.name}.Entity: Métodos get${capitalizedName}/set${capitalizedName} no encontrados`);
                         console.warn(`   SALTANDO actualización del atributo '${normalizedName}'`);
                     }
                 } else {
-                    updates += `        if (updated.get${capitalizedName}() != null) {
-            existing.set${capitalizedName}(updated.get${capitalizedName}());
-        }
-`;
+                    updates += asignarCampoActualizado(capitalizedName, modo);
                 }
             });
         const parentEntity = this.getParentEntity(entity.id);
@@ -424,11 +507,7 @@ ${this.generateUpdateFieldsLogic(entity)}
                     const hasGetter = entityMeta.entity.getters.includes(`get${capitalizedName}`);
                     const hasSetter = entityMeta.entity.setters.includes(`set${capitalizedName}`);
                     if (hasGetter && hasSetter) {
-                        updates += `        // FK: ${normalizedName}
-        if (updated.get${capitalizedName}() != null) {
-            existing.set${capitalizedName}(updated.get${capitalizedName}());
-        }
-`;
+                        updates += `        // FK: ${normalizedName}\n` + asignarCampoActualizado(capitalizedName, modo);
                     } else {
                         console.warn(`⚠️  ${entity.name}.Entity FK: Métodos get${capitalizedName}/set${capitalizedName} no encontrados`);
                         console.warn(`   Available getters: ${entityMeta.entity.getters.join(', ')}`);
@@ -436,22 +515,14 @@ ${this.generateUpdateFieldsLogic(entity)}
                         console.warn(`   SALTANDO actualización del FK '${normalizedName}'`);
                     }
                 } else {
-                    updates += `        // FK: ${normalizedName}
-        if (updated.get${capitalizedName}() != null) {
-            existing.set${capitalizedName}(updated.get${capitalizedName}());
-        }
-`;
+                    updates += `        // FK: ${normalizedName}\n` + asignarCampoActualizado(capitalizedName, modo);
                 }
             });
         }
-        updates += this.generateActualizarHeredados(entity);
+        updates += this.generateActualizarHeredados(entity, { modo });
         this.getMuchosAMuchosPropios(entity).forEach(otra => {
             const coleccion = this.capitalize(this.toCamelCase(otra.name) + 's');
-            updates += `        // Muchos a muchos: ${otra.name} (se reemplaza si se envía la lista)
-        if (updated.get${coleccion}() != null && !updated.get${coleccion}().isEmpty()) {
-            existing.set${coleccion}(updated.get${coleccion}());
-        }
-`;
+            updates += `        // Muchos a muchos: ${otra.name}\n` + asignarCampoActualizado(coleccion, modo);
         });
         return updates;
     }
@@ -460,7 +531,7 @@ ${this.generateUpdateFieldsLogic(entity)}
      * Campos heredados de una entidad hija: su metadata solo lista los propios y un
      * PUT no actualizaba los atributos definidos en el padre.
      */
-    generateActualizarHeredados(entity) {
+    generateActualizarHeredados(entity, { modo = 'combinar' } = {}) {
         let updates = '';
         const propios = new Set(entity.attributes.map(a => a.name));
         const vistos = new Set();
@@ -473,11 +544,7 @@ ${this.generateUpdateFieldsLogic(entity)}
                 .forEach(attr => {
                     propios.add(attr.name);
                     const cap = this.capitalize(this.toCamelCase(attr.name));
-                    updates += `        // Heredado de ${padre.name}
-        if (updated.get${cap}() != null) {
-            existing.set${cap}(updated.get${cap}());
-        }
-`;
+                    updates += `        // Heredado de ${padre.name}\n` + asignarCampoActualizado(cap, modo);
                 });
         }
         return updates;
@@ -485,18 +552,22 @@ ${this.generateUpdateFieldsLogic(entity)}
 
     generateFKResolutionLogic(entity) {
         let logic = '';
-        const parentEntity = this.getParentEntity(entity.id);
-        const fkAttributes = entity.attributes.filter(attr => {
-            if (!attr.isForeignKey || !attr.referencedEntity) return false;
-            if (parentEntity && attr.referencedEntity === parentEntity.name) return false;
-            return true;
-        });
+        // Incluye todos los ancestros y descarta sus FK técnicas de herencia.
+        const fkAttributes = atributosListado(entity, this.entities, this.relationships)
+            .filter(attr => attr.isForeignKey && attr.referencedEntity);
         const muchosAMuchos = this.getMuchosAMuchosPropios(entity);
         if (fkAttributes.length === 0 && muchosAMuchos.length === 0) {
             logic = '        // No hay FKs que resolver\n';
             return logic;
         }
-        const entityMeta = this.metadata ? this.metadata.get(entity.name) : null;
+        const metadatos = [];
+        const visitadas = new Set();
+        for (let declaradora = entity; declaradora && !visitadas.has(declaradora.id);
+            declaradora = this.getParentEntity(declaradora.id)) {
+            visitadas.add(declaradora.id);
+            const meta = this.metadata?.get(declaradora.name)?.entity;
+            if (meta) metadatos.push(meta);
+        }
         fkAttributes.forEach(attr => {
             const normalizedName = this.toCamelCase(attr.name);
             const capitalizedName = this.capitalize(normalizedName);
@@ -507,9 +578,9 @@ ${this.generateUpdateFieldsLogic(entity)}
             const pkName = refEntity ? this.getPrimaryKeyName(refEntity) : 'id';
             const normalizedPkName = this.toCamelCase(pkName);
             const capitalizedPkName = this.capitalize(normalizedPkName);
-            if (entityMeta && entityMeta.entity) {
-                const hasGetter = entityMeta.entity.getters.includes(`get${capitalizedName}`);
-                const hasSetter = entityMeta.entity.setters.includes(`set${capitalizedName}`);
+            if (metadatos.length) {
+                const hasGetter = metadatos.some(meta => meta.getters.includes(`get${capitalizedName}`));
+                const hasSetter = metadatos.some(meta => meta.setters.includes(`set${capitalizedName}`));
                 if (!hasGetter || !hasSetter) {
                     console.warn(`⚠️  ${entity.name}.Entity: Métodos get${capitalizedName}/set${capitalizedName} no encontrados para FK`);
                     console.warn(`   SALTANDO resolución de FK '${normalizedName}'`);
@@ -579,13 +650,13 @@ ${this.generateUpdateFieldsLogic(entity)}
                 implementations += `    @Override
     @Transactional(readOnly = true)
     public List<${entity.name}> findBy${capName}(${javaType} ${normalizedName}) {
-        return repository.findBy${capName}(${normalizedName});
+        return ${this.conPermisos ? `repository.findAll(this.autorizacion.<${entity.name}>alcance("${entity.name}", "ver").and((raiz, consulta, cb) -> cb.equal(raiz.get("${normalizedName}"), ${normalizedName})))` : `repository.findBy${capName}(${normalizedName})`};
     }
 
     @Override
     @Transactional(readOnly = true)
     public boolean existsBy${capName}(${javaType} ${normalizedName}) {
-        return repository.existsBy${capName}(${normalizedName});
+        return ${this.conPermisos ? `repository.exists(this.autorizacion.<${entity.name}>alcance("${entity.name}", "ver").and((raiz, consulta, cb) -> cb.equal(raiz.get("${normalizedName}"), ${normalizedName})))` : `repository.existsBy${capName}(${normalizedName})`};
     }
 
 `;
@@ -606,19 +677,19 @@ ${this.generateUpdateFieldsLogic(entity)}
                 implementations += `    @Override
     @Transactional(readOnly = true)
     public List<${entity.name}> findBy${capFieldName}(${attr.referencedEntity} ${normalizedFieldName}) {
-        return repository.findBy${capFieldName}(${normalizedFieldName});
+        return ${this.conPermisos ? `repository.findAll(this.autorizacion.<${entity.name}>alcance("${entity.name}", "ver").and((raiz, consulta, cb) -> cb.equal(raiz.get("${normalizedFieldName}"), ${normalizedFieldName})))` : `repository.findBy${capFieldName}(${normalizedFieldName})`};
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<${entity.name}> findBy${capFieldName}${capPkName}(${pkType} ${normalizedFieldName}${capPkName}) {
-        return repository.findBy${capFieldName}${capPkName}(${normalizedFieldName}${capPkName});
+        return ${this.conPermisos ? `repository.findAll(this.autorizacion.<${entity.name}>alcance("${entity.name}", "ver").and((raiz, consulta, cb) -> cb.equal(raiz.get("${normalizedFieldName}").get("${normalizedPkName}"), ${normalizedFieldName}${capPkName})))` : `repository.findBy${capFieldName}${capPkName}(${normalizedFieldName}${capPkName})`};
     }
 
     @Override
     @Transactional(readOnly = true)
     public long countBy${capFieldName}(${attr.referencedEntity} ${normalizedFieldName}) {
-        return repository.countBy${capFieldName}(${normalizedFieldName});
+        return ${this.conPermisos ? `repository.count(this.autorizacion.<${entity.name}>alcance("${entity.name}", "ver").and((raiz, consulta, cb) -> cb.equal(raiz.get("${normalizedFieldName}"), ${normalizedFieldName})))` : `repository.countBy${capFieldName}(${normalizedFieldName})`};
     }
 
 `;

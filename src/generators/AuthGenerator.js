@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 /**
  * Inicio de sesión con roles en el proyecto generado.
  *
@@ -31,14 +32,14 @@ export const detectarRoles = (entidades = []) => {
             gestor: ES_GESTOR.test(SIN_TILDES(e.name)),
         }));
     if (!roles.length) return [{ clase: null, rol: 'ADMIN', gestor: true }];
-    // Si ninguno gestiona, el primero lo hace: si no, nadie podría cargar datos
-    if (!roles.some((r) => r.gestor)) roles[0].gestor = true;
+    // Administración explícita: nunca ascender un Cliente/Paciente por quedar primero.
+    if (!roles.some((r) => r.gestor)) roles.push({ clase: null, rol: 'ADMIN', gestor: true, administrador: true });
     return roles;
 };
 
 const lista = (valores) => valores.map((v) => `"${v}"`).join(', ');
 
-export const entidadUsuario = () => `package com.example.demo.entities;
+export const entidadUsuario = (politica = null) => `package com.example.demo.entities;
 
 import jakarta.persistence.*;
 
@@ -47,7 +48,7 @@ import jakarta.persistence.*;
  * qué puede hacer: todos consultan, solo los roles de gestión crean, editan y borran.
  */
 @Entity
-@Table(name = "usuario", uniqueConstraints = @UniqueConstraint(columnNames = "correo"))
+@Table(name = "usuario", uniqueConstraints = ${politica?.explicito ? '{@UniqueConstraint(columnNames = "correo"), @UniqueConstraint(columnNames = {"rol", "referencia_id"})}' : '@UniqueConstraint(columnNames = "correo")'})
 public class Usuario {
 
     @Id
@@ -70,6 +71,14 @@ public class Usuario {
     /** Id del registro de esa persona en su propia tabla (opcional). */
     @Column(name = "referencia_id", length = 255)
     private String referenciaId;
+${politica?.explicito ? `
+    /** Los enlaces antiguos o declarados por el usuario no acreditan titularidad. */
+    @Column(name = "vinculo_verificado", nullable = false, columnDefinition = "boolean default false")
+    private boolean vinculoVerificado = false;
+
+    public boolean isVinculoVerificado() { return vinculoVerificado; }
+    public void setVinculoVerificado(boolean valor) { this.vinculoVerificado = valor; }
+` : ''}
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -101,7 +110,7 @@ public interface UsuarioRepository extends JpaRepository<Usuario, Long> {
 }
 `;
 
-export const servicioAuth = (roles) => `package com.example.demo.services;
+export const servicioAuth = (roles, politica = null) => `package com.example.demo.services;
 
 import com.example.demo.entities.Usuario;
 import com.example.demo.repositories.UsuarioRepository;
@@ -135,12 +144,23 @@ public class AuthService {
     public static final List<String> ROLES = List.of(${lista(roles.map((r) => r.rol))});
 
     private final UsuarioRepository repository;
+${politica?.explicito ? `    @Autowired
+    private com.example.demo.config.VinculosCuenta vinculos;` : ''}
     private final ObjectMapper json = new ObjectMapper();
     private final SecureRandom azar = new SecureRandom();
 
     /** Roles que pueden crear, editar y borrar. El resto solo consulta. */
     @Value("\${app.auth.roles-gestores:${roles.filter((r) => r.gestor).map((r) => r.rol).join(',')}}")
     private String rolesGestores;
+
+    @Value("\${app.auth.roles-registro-publico:}")
+    private String rolesRegistroPublico;
+
+    @Value("\${AUTH_INICIAL_CORREO:}")
+    private String correoInicial;
+
+    @Value("\${AUTH_INICIAL_CLAVE:}")
+    private String claveInicial;
 
     @Value("\${app.auth.secreto:}")
     private String secretoConfigurado;
@@ -164,10 +184,19 @@ public class AuthService {
 
     @PostConstruct
     void preparar() {
-        String base = secretoConfigurado == null || secretoConfigurado.isBlank()
-                ? "clave-de-firma-por-defecto-cambiala-en-produccion"
-                : secretoConfigurado;
-        secreto = base.getBytes(StandardCharsets.UTF_8);
+        if (secretoConfigurado == null || secretoConfigurado.isBlank()) {
+            secreto = new byte[48];
+            azar.nextBytes(secreto);
+            System.out.println("Sin AUTH_SECRET: las sesiones se cerrarán al reiniciar.");
+        } else {
+            secreto = secretoConfigurado.getBytes(StandardCharsets.UTF_8);
+        }
+        if (!cuentasDemo && ${politica?.explicito ? 'repository.findAll().stream().noneMatch(u -> com.example.demo.config.Permisos.ADMINISTRADORES.contains(u.getRol()))' : 'repository.count() == 0'} && !correoInicial.isBlank()) {
+            String gestor = ROLES.stream().filter(${politica?.explicito ? 'com.example.demo.config.Permisos.ADMINISTRADORES::contains' : 'this::puedeGestionar'}).findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("Configura un rol de gestión antes de crear la cuenta inicial."));
+            crearCuenta(correoInicial, claveInicial, gestor, "Administración", null);
+        }
+        if (cuentasDemo) System.out.println("Cuentas de prueba activas. Para publicar: AUTH_DEMO=false.");
         if (cuentasDemo && repository.count() == 0) {
             for (String rol : ROLES) {
                 Usuario u = new Usuario();
@@ -178,22 +207,60 @@ public class AuthService {
                 repository.save(u);
             }
             System.out.println("Cuentas de prueba creadas: " + ROLES.stream()
-                    .map(r -> r.toLowerCase() + "@demo.com").toList() + " con la clave " + claveDemo);
+                    .map(r -> r.toLowerCase() + "@demo.com").toList());
         }
     }
 
     public boolean puedeGestionar(String rol) {
-        return Arrays.stream(rolesGestores.split(","))
+${politica?.explicito ? `        return com.example.demo.config.Permisos.ADMINISTRADORES.contains(rol) || com.example.demo.config.Permisos.POR_ROL.getOrDefault(rol, java.util.Map.of()).values().stream()
+                .anyMatch(r -> !r.alcance().equals("ninguno") && r.acciones().stream().anyMatch(a -> !a.equals("ver")));` : `        return Arrays.stream(rolesGestores.split(","))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
-                .anyMatch(s -> s.equalsIgnoreCase(rol));
+                .anyMatch(s -> s.equalsIgnoreCase(rol));`}
     }
 
     public List<String> rolesQueGestionan() {
         return Arrays.stream(rolesGestores.split(",")).map(String::trim).filter(s -> !s.isEmpty()).toList();
     }
 
+    public List<String> rolesQueSeRegistran() {
+        return Arrays.stream(rolesRegistroPublico.split(",")).map(String::trim)
+                .map(String::toUpperCase).filter(ROLES::contains).filter(r -> !puedeGestionar(r)).toList();
+    }
+
     public Usuario registrar(String correo, String clave, String rol, String nombre, String referenciaId) {
+        String elegido = rol == null ? "" : rol.trim().toUpperCase();
+        var permitidos = rolesQueSeRegistran();
+        if (!permitidos.contains(elegido)) throw new IllegalArgumentException(permitidos.isEmpty()
+                ? "Las cuentas las crea quien administra. Pide que te den acceso."
+                : "Al crear tu cuenta puedes elegir: " + permitidos);
+${politica?.explicito ? `        if (referenciaId != null && !referenciaId.isBlank())
+            throw new IllegalArgumentException("El registro público no puede reclamar un registro existente. Administración debe vincular tu cuenta.");
+        return guardarCuenta(correo, clave, elegido, nombre, null, true);` : '        return crearCuenta(correo, clave, elegido, nombre, referenciaId);'}
+    }
+
+    public List<Usuario> cuentas() { return repository.findAll(); }
+
+    public Usuario cambiarRol(Long id, String rol) {
+        if (rol == null || !ROLES.contains(rol)) throw new IllegalArgumentException("Rol no válido.");
+        Usuario usuario = repository.findById(id).orElseThrow(() -> new IllegalArgumentException("La cuenta no existe."));
+${politica?.explicito ? '        if (!rol.equals(usuario.getRol())) { usuario.setReferenciaId(null); usuario.setVinculoVerificado(false); }' : ''}
+        usuario.setRol(rol);
+        return repository.save(usuario);
+    }
+
+    public Usuario crearCuenta(String correo, String clave, String rol, String nombre, String referenciaId) {
+${politica?.explicito ? `        return guardarCuenta(correo, clave, rol, nombre, referenciaId, false);
+    }
+
+    public Usuario vincularCuenta(Long id, String referenciaId) {
+        Usuario usuario = repository.findById(id).orElseThrow(() -> new IllegalArgumentException("La cuenta no existe."));
+        usuario.setReferenciaId(vinculos.validar(usuario.getRol(), referenciaId, id, true));
+        usuario.setVinculoVerificado(usuario.getReferenciaId() != null);
+        return repository.save(usuario);
+    }
+
+    private Usuario guardarCuenta(String correo, String clave, String rol, String nombre, String referenciaId, boolean pendiente) {` : ''}
         String limpio = correo == null ? "" : correo.trim().toLowerCase();
         if (limpio.isEmpty() || !limpio.contains("@")) throw new IllegalArgumentException("Escribe un correo válido.");
         if (clave == null || clave.length() < 8) throw new IllegalArgumentException("La clave debe tener al menos 8 caracteres.");
@@ -206,7 +273,8 @@ public class AuthService {
         usuario.setClave(protegerClave(clave));
         usuario.setRol(rolLimpio);
         usuario.setNombre(nombre);
-        usuario.setReferenciaId(referenciaId);
+        usuario.setReferenciaId(${politica?.explicito ? 'vinculos.validar(rolLimpio, referenciaId, null, pendiente)' : 'referenciaId'});
+${politica?.explicito ? '        usuario.setVinculoVerificado(!pendiente && usuario.getReferenciaId() != null);' : ''}
         return repository.save(usuario);
     }
 
@@ -291,7 +359,7 @@ public class AuthService {
 }
 `;
 
-export const controladorAuth = () => `package com.example.demo.controllers;
+export const controladorAuth = (politica = null) => `package com.example.demo.controllers;
 
 import com.example.demo.entities.Usuario;
 import com.example.demo.services.AuthService;
@@ -328,7 +396,7 @@ public class AuthController {
     public ResponseEntity<Map<String, Object>> roles() {
         Map<String, Object> respuesta = new HashMap<>();
         respuesta.put("success", true);
-        respuesta.put("data", Map.of("roles", AuthService.ROLES, "gestores", service.rolesQueGestionan()));
+        respuesta.put("data", Map.of("roles", AuthService.ROLES, "gestores", service.rolesQueGestionan(), "registroPublico", service.rolesQueSeRegistran()));
         return ResponseEntity.ok(respuesta);
     }
 
@@ -393,14 +461,14 @@ public class AuthController {
         datos.put("correo", usuario.getCorreo());
         datos.put("rol", usuario.getRol());
         datos.put("nombre", usuario.getNombre());
-        datos.put("referenciaId", usuario.getReferenciaId());
+        datos.put("referenciaId", ${politica?.explicito ? 'usuario.isVinculoVerificado() ? usuario.getReferenciaId() : null' : 'usuario.getReferenciaId()'});
         datos.put("puedeGestionar", service.puedeGestionar(usuario.getRol()));
         return datos;
     }
 }
 `;
 
-export const filtroAuth = () => `package com.example.demo.config;
+export const filtroAuth = (politica = null) => `package com.example.demo.config;
 
 import com.example.demo.services.AuthService;
 import jakarta.servlet.FilterChain;
@@ -433,12 +501,17 @@ public class AuthFiltro extends OncePerRequestFilter {
         this.auth = auth;
     }
 
+    /** Ruta decodificada, sin context-path ni parámetros de matriz de los segmentos. */
+    private String rutaDe(HttpServletRequest peticion) {
+        return peticion.getServletPath().replaceAll(";[^/]*", "");
+    }
+
     @Override
     protected boolean shouldNotFilter(HttpServletRequest peticion) {
-        String ruta = peticion.getRequestURI();
-        return !activa
+        String ruta = rutaDe(peticion);
+        return ${politica?.explicito ? 'false' : '!activa'}
                 || "OPTIONS".equalsIgnoreCase(peticion.getMethod())
-                || ruta.startsWith("/api/auth")
+                || java.util.List.of("/api/auth/login", "/api/auth/registro", "/api/auth/roles").contains(ruta)
                 || ruta.equals("/api/asistente/estado")
                 || !ruta.startsWith("/api");
     }
@@ -456,18 +529,37 @@ public class AuthFiltro extends OncePerRequestFilter {
             return;
         }
 
-        String rol = datos.get().path("rol").asText("");
+        var cuenta = auth.porCorreo(datos.get().path("correo").asText(""));
+        if (cuenta.isEmpty()) {
+            responder(respuesta, HttpServletResponse.SC_UNAUTHORIZED, "La cuenta ya no existe.");
+            return;
+        }
+        String rol = cuenta.get().getRol();
         String metodo = peticion.getMethod();
+        String ruta = rutaDe(peticion);
         boolean modifica = metodo.equals("POST") || metodo.equals("PUT")
                 || metodo.equals("PATCH") || metodo.equals("DELETE");
-        if (modifica && !auth.puedeGestionar(rol)) {
+${politica?.explicito ? `        String accion = switch (metodo) {
+            case "GET", "HEAD" -> "ver"; case "POST" -> "crear";
+            case "PUT", "PATCH" -> "editar"; case "DELETE" -> "borrar"; default -> "ninguna";
+        };
+        boolean permitido;
+        if (ruta.equals("/api/auth/yo")) permitido = accion.equals("ver");
+        else if (ruta.equals("/api/cuentas") || ruta.startsWith("/api/cuentas/") || ruta.startsWith("/api/asistente/"))
+            permitido = Permisos.ADMINISTRADORES.contains(rol);
+        else {
+            String modulo = Permisos.modulo(ruta);
+            permitido = modulo != null && Permisos.puede(rol, modulo, accion);
+        }
+        if (!permitido) {` : '        if ((modifica || ruta.equals("/api/cuentas") || ruta.startsWith("/api/cuentas/")) && !auth.puedeGestionar(rol)) {'}
             responder(respuesta, HttpServletResponse.SC_FORBIDDEN,
-                    "Tu rol (" + rol + ") puede consultar, pero no modificar datos.");
+                    ${politica?.explicito ? '"Tu rol no permite esta operación en este módulo."' : '"Tu rol (" + rol + ") puede consultar, pero no modificar datos."'});
             return;
         }
 
         peticion.setAttribute("usuarioRol", rol);
         peticion.setAttribute("usuarioCorreo", datos.get().path("correo").asText(""));
+${politica?.explicito ? '        peticion.setAttribute("usuarioReferenciaId", cuenta.get().isVinculoVerificado() ? cuenta.get().getReferenciaId() : null);' : ''}
         cadena.doFilter(peticion, respuesta);
     }
 
@@ -489,8 +581,69 @@ app.auth.activa=true
 app.auth.roles-gestores=${roles.filter((r) => r.gestor).map((r) => r.rol).join(',')}
 app.auth.horas-sesion=12
 # Firma de las sesiones: cámbiala por una frase larga propia (o usa la variable AUTH_SECRET)
-app.auth.secreto=\${AUTH_SECRET:cambia-esta-frase-por-una-larga-y-secreta}
+app.auth.secreto=\${AUTH_SECRET:${randomBytes(48).toString('base64url')}}
 # Cuentas de prueba al arrancar con la base vacía: ${roles.map((r) => `${r.rol.toLowerCase()}@demo.com`).join(', ')}
-app.auth.cuentas-demo=true
-app.auth.clave-demo=12345678
+app.auth.roles-registro-publico=${roles.filter(r => !r.gestor).map(r => r.rol).join(',')}
+app.auth.cuentas-demo=\${AUTH_DEMO:true}
+app.auth.clave-demo=\${AUTH_DEMO_CLAVE:12345678}
+`;
+
+/** Administración protegida por AuthFiltro; nunca devuelve hashes ni tokens. */
+export const controladorCuentas = (politica = null) => `package com.example.demo.controllers;
+
+import com.example.demo.entities.Usuario;
+import com.example.demo.services.AuthService;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.http.ResponseEntity;
+import java.util.Map;
+import java.util.HashMap;
+
+@RestController
+@RequestMapping("/api/cuentas")
+public class CuentasController {
+    private final AuthService service;
+    public CuentasController(AuthService service) { this.service = service; }
+
+    private Map<String, Object> publicar(Usuario cuenta) {
+        Map<String, Object> datos = new HashMap<>();
+        datos.put("id", cuenta.getId()); datos.put("correo", cuenta.getCorreo());
+        datos.put("rol", cuenta.getRol()); datos.put("nombre", cuenta.getNombre());
+${politica?.explicito ? '        datos.put("referenciaId", cuenta.getReferenciaId()); datos.put("vinculoVerificado", cuenta.isVinculoVerificado());' : ''}
+        return datos;
+    }
+
+    @GetMapping
+    public Map<String, Object> listar() {
+        return Map.of("success", true, "data", service.cuentas().stream().map(this::publicar).toList());
+    }
+
+    @PostMapping
+    public ResponseEntity<?> crear(@RequestBody Map<String, String> cuerpo) {
+        try {
+            var cuenta = service.crearCuenta(cuerpo.get("correo"), cuerpo.get("clave"), cuerpo.get("rol"), cuerpo.get("nombre"), cuerpo.get("referenciaId"));
+            return ResponseEntity.status(201).body(Map.of("success", true, "data", publicar(cuenta)));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+        }
+    }
+
+    @PutMapping("/{id}/rol")
+    public ResponseEntity<?> cambiar(@PathVariable Long id, @RequestBody Map<String, String> cuerpo) {
+        try {
+            return ResponseEntity.ok(Map.of("success", true, "data", publicar(service.cambiarRol(id, cuerpo.get("rol")))));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+        }
+    }
+${politica?.explicito ? `
+    @PutMapping("/{id}/vinculo")
+    public ResponseEntity<?> vincular(@PathVariable Long id, @RequestBody Map<String, String> cuerpo) {
+        try {
+            return ResponseEntity.ok(Map.of("success", true, "data", publicar(service.vincularCuenta(id, cuerpo.get("referenciaId")))));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+        }
+    }
+` : ''}
+}
 `;

@@ -1,3 +1,4 @@
+import { largoTexto } from './RestriccionesUML.js';
 import ValidationUtils from './ValidationUtils.js';
 
 class EntityGenerator {
@@ -458,15 +459,16 @@ ${operaciones}
         }
         const columnName = this.toSnakeCase(attr.name);
         code += `    @Column(name = "${columnName}"`;
-        if (attr.isPrimaryKey) {
+        if (attr.isPrimaryKey || attr.obligatorio !== false) {
             code += ', nullable = false';
         }
+        if (attr.unico) code += ', unique = true';
         if (attr.type === 'String') {
             if (/^TEXT$/i.test(attr.sqlType || '')) {
                 // text y geometrías WKT: sin límite de largo, igual que el script SQL
                 code += ', columnDefinition = "TEXT"';
             } else {
-                const length = attr.sqlType?.match(/\d+/)?.[0] || '255';
+                const length = largoTexto(attr);
                 code += `, length = ${length}`;
             }
         }
@@ -491,7 +493,7 @@ ${operaciones}
             parts.push('nullable = false');
         }
         if (attr.type === 'String') {
-            const length = attr.sqlType?.match(/\d+/)?.[0] || '255';
+            const length = largoTexto(attr);
             parts.push(`length = ${length}`);
         }
         return parts.length > 0 ? parts.join(', ') : null;

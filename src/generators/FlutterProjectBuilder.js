@@ -1,3 +1,5 @@
+import { archivoServicio } from './FlutterNombres.js';
+import { rutaEntidad } from './NombresReservados.js';
 import path from 'path';
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
@@ -11,6 +13,8 @@ import {
   asistenteLocalDart, asistentePantallaDart, asistenteServicioDart
 } from './FlutterAsistenteGenerator.js';
 import { authServicioDart, loginPantallaDart } from './FlutterAuthGenerator.js';
+import { aplicarPermisos, permisosDe } from './Permisos.js';
+import { permisosDart } from './FlutterPermisosGenerator.js';
 
 class FlutterProjectBuilder {
   /**
@@ -40,6 +44,7 @@ class FlutterProjectBuilder {
 
   async build() {
     try {
+      this.archivosEscritos = new Set();
       const parser = new DiagramParser();
       const parsedDiagram = parser.parse(this.xmlString);
       this.relationships = parsedDiagram.relationships || [];
@@ -47,8 +52,11 @@ class FlutterProjectBuilder {
       // y las clases abstractas no tienen API propia (sus campos van en las hijas).
       this.entities = parsedDiagram.entities.filter(e => !esAuxiliar(e));
       this.entidadesConApi = this.entities.filter(e => !esAbstracta(e));
+      this.politica = permisosDe(this.entities, this.relationships, parsedDiagram.permisosCrudos);
+      aplicarPermisos(this.entities, this.relationships, this.politica);
 
       await this.createProjectStructure();
+      await this.escribirNuevo(path.join(this.projectPath, 'lib', 'config', 'permisos.dart'), permisosDart(this.politica));
       await this.generateModels();
       await this.generateServices();
       await this.generateAutenticacion();
@@ -57,6 +65,18 @@ class FlutterProjectBuilder {
       await this.generateMainFiles();
     } catch (error) {
       console.error('❌ Error construyendo proyecto Flutter:', error);
+      throw error;
+    }
+  }
+
+  async escribirNuevo(ruta, contenido) {
+    const clave = path.resolve(ruta).toLowerCase();
+    if (this.archivosEscritos.has(clave)) throw new Error(`Dos generadores intentaron escribir ${path.basename(ruta)}.`);
+    try {
+      await fs.writeFile(ruta, contenido, { encoding: 'utf8', flag: 'wx' });
+      this.archivosEscritos.add(clave);
+    } catch (error) {
+      if (error.code === 'EEXIST') throw new Error(`Dos generadores intentaron escribir ${path.basename(ruta)}.`);
       throw error;
     }
   }
@@ -83,20 +103,20 @@ class FlutterProjectBuilder {
     const generator = new FlutterModelGenerator(this.entities, this.relationships);
     for (const entity of this.entities) {
       const filePath = path.join(this.projectPath, 'lib', 'models', `${archivoDart(entity.name)}.dart`);
-      await fs.writeFile(filePath, generator.generate(entity), 'utf8');
+      await this.escribirNuevo(filePath, generator.generate(entity), 'utf8');
     }
   }
 
   async generateServices() {
     const generator = new FlutterServiceGenerator(this.entities, this.relationships, this.entidadesConApi);
-    await fs.writeFile(
+    await this.escribirNuevo(
       path.join(this.projectPath, 'lib', 'services', 'base_service.dart'),
       generator.generateBaseService(),
       'utf8'
     );
     for (const entity of this.entidadesConApi) {
-      const filePath = path.join(this.projectPath, 'lib', 'services', `${archivoDart(entity.name)}_service.dart`);
-      await fs.writeFile(filePath, generator.generate(entity), 'utf8');
+      const filePath = path.join(this.projectPath, 'lib', 'services', `${archivoServicio(entity.name)}.dart`);
+      await this.escribirNuevo(filePath, generator.generate(entity), 'utf8');
     }
   }
 
@@ -105,17 +125,17 @@ class FlutterProjectBuilder {
    */
   async generateAsistente() {
     const atributosDe = (entity) => atributosDTO(entity, this.entities, this.relationships);
-    await fs.writeFile(
+    await this.escribirNuevo(
       path.join(this.projectPath, 'lib', 'asistente', 'asistente_local.dart'),
       asistenteLocalDart(this.nombreApp, this.entidadesConApi, atributosDe, this.proposito),
       'utf8'
     );
-    await fs.writeFile(
+    await this.escribirNuevo(
       path.join(this.projectPath, 'lib', 'services', 'asistente_service.dart'),
       asistenteServicioDart(),
       'utf8'
     );
-    await fs.writeFile(
+    await this.escribirNuevo(
       path.join(this.projectPath, 'lib', 'screens', 'asistente_screen.dart'),
       asistentePantallaDart(this.nombreApp, this.entidadesConApi),
       'utf8'
@@ -124,12 +144,12 @@ class FlutterProjectBuilder {
 
   /** Inicio de sesión: servicio con el token y pantalla de acceso. */
   async generateAutenticacion() {
-    await fs.writeFile(
+    await this.escribirNuevo(
       path.join(this.projectPath, 'lib', 'services', 'auth_service.dart'),
       authServicioDart(this.nombreApp),
       'utf8'
     );
-    await fs.writeFile(
+    await this.escribirNuevo(
       path.join(this.projectPath, 'lib', 'screens', 'login_screen.dart'),
       loginPantallaDart(this.nombreApp),
       'utf8'
@@ -137,20 +157,20 @@ class FlutterProjectBuilder {
   }
 
   async generateScreens() {
-    const generator = new FlutterScreenGenerator(this.entities, this.relationships, this.entidadesConApi);
-    await fs.writeFile(
+    const generator = new FlutterScreenGenerator(this.entities, this.relationships, this.entidadesConApi, this.politica);
+    await this.escribirNuevo(
       path.join(this.projectPath, 'lib', 'screens', 'home_screen.dart'),
       generator.generateHomeScreen(this.nombreApp),
       'utf8'
     );
     for (const entity of this.entidadesConApi) {
       const base = archivoDart(entity.name);
-      await fs.writeFile(
+      await this.escribirNuevo(
         path.join(this.projectPath, 'lib', 'screens', `${base}_list_screen.dart`),
         generator.generateListScreen(entity),
         'utf8'
       );
-      await fs.writeFile(
+      await this.escribirNuevo(
         path.join(this.projectPath, 'lib', 'screens', `${base}_form_screen.dart`),
         generator.generateFormScreen(entity),
         'utf8'
@@ -166,12 +186,26 @@ class FlutterProjectBuilder {
       'pubspec.yaml': generator.generatePubspec(),
       'analysis_options.yaml': generator.generateAnalysisOptions(),
       [path.join('test', 'widget_test.dart')]: generator.generateWidgetTest(),
-      'README.md': generator.generateReadme(this.entidadesConApi),
+      'README.md': generator.generateReadme(this.entidadesConApi) + this.documentarNombres() + this.documentarPermisos(),
       '⚠️ LEER_PRIMERO.txt': this.generateQuickStart()
     };
     for (const [relativa, contenido] of Object.entries(archivos)) {
-      await fs.writeFile(path.join(this.projectPath, relativa), contenido, 'utf8');
+      await this.escribirNuevo(path.join(this.projectPath, relativa), contenido, 'utf8');
     }
+  }
+
+  documentarNombres() {
+    const rutas = this.entidadesConApi.filter(e => rutaEntidad(e.name).startsWith('entidades/'))
+      .map(e => `- ${e.name}: API de la entidad en /api/${rutaEntidad(e.name)}.`);
+    return '\n## Nombres de servicios y rutas\n\n' +
+      'Los servicios CRUD usan archivos entidad_<nombre>_service.dart y clases Api<Nombre>Service para conservar los servicios de sesión, asistente y conexión. Los modelos conservan el nombre del diagrama.\n\n' +
+      rutas.join('\n') + '\n';
+  }
+
+  documentarPermisos() {
+    return '\n## Permisos de acceso\n\n' + (this.politica?.explicito
+      ? 'El menú y las acciones siguen la política declarada, disponible en lib/config/permisos.dart. El backend vuelve a comprobar cada permiso y limita los registros al propietario o a las asignaciones de la cuenta. Una cuenta pendiente de vinculación necesita que administración la asocie con su registro.\n'
+      : 'Sin política declarada se conserva la lectura global para usuarios con sesión. La escritura depende del permiso de gestión vigente que devuelve la API; el backend puede configurarlo con app.auth.roles-gestores.\n');
   }
 
   generateQuickStart() {

@@ -16,13 +16,13 @@ import { FRONTEND_URLS, TOKEN_SECRET } from './config.js';
 const baseLista = inicializarBaseDatos()
     .then((creada) => console.log(creada ? 'DB connected: tablas creadas desde database.sql' : 'DB connected successfully'))
     // Cuentas y tableros de ejemplo (CLAVE_USUARIOS_PRUEBA vacía los desactiva); cada arranque
-    // restaura los tableros de ejemplo y borra los que se crearon con esas cuentas al probar
+    // restaura los cinco tableros de ejemplo y deja intactos los demás de esas cuentas
     .then(() => asegurarUsuariosPrueba()
         .then(async (cuentas) => {
             if (!cuentas.length) return;
             console.log(`Cuentas de prueba listas: ${cuentas.map(c => c.email).join(', ')}`);
-            const { restaurados, eliminados } = await asegurarTablerosPrueba(cuentas[0].id, cuentas[1].id);
-            console.log(`Tableros de ejemplo: ${restaurados} restaurados, ${eliminados} extra eliminados`);
+            const { restaurados, conservados } = await asegurarTablerosPrueba(cuentas[0].id, cuentas[1].id);
+            console.log(`Tableros de ejemplo: ${restaurados} restaurados, ${conservados} propios conservados`);
         })
         .catch(err => console.error('No se pudieron preparar los datos de prueba:', err.message)))
     .catch(err => console.error("Error connecting to DB", err.stack));

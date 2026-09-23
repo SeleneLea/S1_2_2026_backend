@@ -1,4 +1,5 @@
 import ValidationUtils from './ValidationUtils.js';
+import { muchosAMuchosEditables } from './Permisos.js';
 
 class DTOGenerator {
     constructor(entities, relationships) {
@@ -38,19 +39,11 @@ class DTOGenerator {
     }
 
     /**
-     * Entidades con las que esta tiene un muchos a muchos del que es DUEÑA (el lado
-     * con @JoinTable). Mismo criterio que EntityGenerator: origen de la arista.
-     * Solo el lado dueño persiste la relación, así que solo él expone los IDs.
+     * Con política explícita, ambos extremos admiten IDs; el servicio sincroniza
+     * el lado propietario. Las colecciones heredadas ya están en el DTO padre.
      */
     getMuchosAMuchosPropios(entity) {
-        return this.relationships
-            .filter(rel => rel.type === 'many-to-many-direct' && rel.source === entity.id)
-            .map(rel => this.entities.find(e => e.id === rel.target))
-            .filter(Boolean)
-            .filter(otra =>
-                !entity.attributes.some(a => a.isForeignKey && a.referencedEntity === otra.name) &&
-                !otra.attributes.some(a => a.isForeignKey && a.referencedEntity === entity.name)
-            );
+        return muchosAMuchosEditables(entity, this.entities, this.relationships, { heredadas: false }).map(r => r.otra);
     }
 
     generateAll() {
@@ -129,7 +122,7 @@ class DTOGenerator {
             const pkType = this.getPrimaryKeyType(otra);
             const fieldName = this.toCamelCase(otra.name) + 'Ids';
             const capitalizedName = this.capitalize(fieldName);
-            fields += `    private List<${pkType}> ${fieldName} = new ArrayList<>(); // Muchos a muchos con ${otra.name}\n`;
+            fields += `    private List<${pkType}> ${fieldName}; // Muchos a muchos con ${otra.name}\n`;
             gettersSetters += `
     public List<${pkType}> get${capitalizedName}() {
         return ${fieldName};

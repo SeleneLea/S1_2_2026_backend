@@ -272,9 +272,11 @@ export const asegurarTablerosPrueba = async (idPropietario, idInvitado) => {
         ids.push(id);
     }
 
-    const extras = await pool.query(
-        'DELETE FROM "Salas" WHERE userid = ANY($1) AND NOT (id = ANY($2)) RETURNING id',
+    // Los demás tableros de esas cuentas se conservan: antes se borraban en cada arranque
+    // y un reinicio de desarrollo se llevaba el trabajo hecho con la cuenta de prueba.
+    const { rows: propios } = await pool.query(
+        'SELECT count(*)::int AS total FROM "Salas" WHERE userid = ANY($1) AND NOT (id = ANY($2)) AND eliminar = false',
         [[idPropietario, idInvitado], ids]
     );
-    return { restaurados: ids.length, eliminados: extras.rowCount };
+    return { restaurados: ids.length, conservados: propios[0].total };
 };

@@ -1,3 +1,5 @@
+import { largoTexto } from './RestriccionesUML.js';
+import { muchosAMuchosEditables } from './Permisos.js';
 /**
  * Nombres y tipos compartidos por los generadores de Flutter.
  *
@@ -78,10 +80,7 @@ export const esSoloFecha = (javaType) => javaType === 'LocalDate' || javaType ==
 export const esHora = (javaType) => javaType === 'LocalTime';
 
 /** Largo máximo que acepta el backend (@Size), o null si no tiene (TEXT o no es texto). */
-export const largoMaximo = (attr) => {
-    if (attr.type !== 'String' || attr.isForeignKey || /^TEXT$/i.test(attr.sqlType || '')) return null;
-    return Number(attr.sqlType?.match(/\d+/)?.[0] || 255);
-};
+export const largoMaximo = attr => attr.type !== 'String' || attr.isForeignKey ? null : largoTexto(attr);
 
 export const nombreClase = (nombre) => {
     const limpio = aAscii(nombre) || 'Clase';
@@ -136,16 +135,9 @@ export const atributosDTO = (entity, entities, relationships, visitados = new Se
 export const pkDe = (entity, entities, relationships) =>
     atributosDTO(entity, entities, relationships).find(a => a.isPrimaryKey) || null;
 
-/** Muchos a muchos de los que la entidad es dueña: mismo criterio que el backend. */
+/** M:N editables: ambos extremos con política explícita; incluye los heredados. */
 export const muchosAMuchosPropios = (entity, entities, relationships) =>
-    relationships
-        .filter(r => r.type === 'many-to-many-direct' && r.source === entity.id)
-        .map(r => entities.find(e => e.id === r.target))
-        .filter(Boolean)
-        .filter(otra =>
-            !entity.attributes.some(a => a.isForeignKey && a.referencedEntity === otra.name) &&
-            !otra.attributes.some(a => a.isForeignKey && a.referencedEntity === entity.name)
-        );
+    muchosAMuchosEditables(entity, entities, relationships).map(r => r.otra);
 
 /** Entidades cuyas opciones necesita el formulario (FK y muchos a muchos con API). */
 export const referenciasConOpciones = (entity, entities, relationships, entidadesConApi) => {
@@ -164,7 +156,9 @@ export const referenciasConOpciones = (entity, entities, relationships, entidade
 
 /** Atributo más descriptivo para mostrar un registro (nombre, título, código...). */
 export const atributoDescriptivo = (atributos) => {
-    const normales = atributos.filter(a => !a.isPrimaryKey && !a.isForeignKey);
+    const normales = atributos.filter(a => !a.isPrimaryKey && !a.isForeignKey && !a.oculto);
+    const principal = normales.find(a => a.principal && tipoDart(a.type) === 'String');
+    if (principal) return principal;
     const preferidos = ['nombre', 'name', 'titulo', 'title', 'descripcion', 'description', 'codigo', 'code'];
     for (const p of preferidos) {
         const a = normales.find(x => campoJava(x.name).toLowerCase().includes(p) && tipoDart(x.type) === 'String');
@@ -172,3 +166,7 @@ export const atributoDescriptivo = (atributos) => {
     }
     return normales.find(a => tipoDart(a.type) === 'String') || null;
 };
+
+/** Prefijo reservado: los servicios CRUD nunca pisan BaseService, AuthService o AsistenteService. */
+export const archivoServicio = nombre => `entidad_${archivoDart(nombre)}_service`;
+export const claseServicio = nombre => `Api${nombreClase(nombre)}Service`;

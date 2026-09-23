@@ -1,3 +1,5 @@
+import { muchosAMuchosEditables } from './Permisos.js';
+
 class MapperGenerator {
     constructor(entities, relationships, metadata) {
         this.entities = entities;
@@ -54,14 +56,7 @@ class MapperGenerator {
      * Mismo criterio que EntityGenerator y DTOGenerator.
      */
     getMuchosAMuchosPropios(entity) {
-        return this.relationships
-            .filter(rel => rel.type === 'many-to-many-direct' && rel.source === entity.id)
-            .map(rel => this.entities.find(e => e.id === rel.target))
-            .filter(Boolean)
-            .filter(otra =>
-                !entity.attributes.some(a => a.isForeignKey && a.referencedEntity === otra.name) &&
-                !otra.attributes.some(a => a.isForeignKey && a.referencedEntity === entity.name)
-            );
+        return muchosAMuchosEditables(entity, this.entities, this.relationships).map(r => r.otra);
     }
 
     getPrimaryKeyGetter(entity) {
@@ -212,13 +207,15 @@ ${updateEntityFromDTO}
             dto.set${ids}(entity.get${coleccion}().stream()
                 .map(${otra.name}::${pkGetter})
                 .collect(Collectors.toList()));
+        } else {
+            dto.set${ids}(new java.util.ArrayList<>());
         }
 `;
         }).join('');
     }
 
     // Objetos temporales con solo el ID: el servicio los reemplaza por los reales
-    generateMuchosAMuchosToEntity(entity) {
+    generateMuchosAMuchosToEntity(entity, { conservarOmitidos = false } = {}) {
         return this.getMuchosAMuchosPropios(entity).map(otra => {
             const coleccion = this.capitalize(this.toCamelCase(otra.name) + 's');
             const ids = this.capitalize(this.toCamelCase(otra.name) + 'Ids');
@@ -233,7 +230,9 @@ ${updateEntityFromDTO}
                     return ${variable};
                 })
                 .collect(Collectors.toList()));
-        }
+        }${conservarOmitidos ? '' : ` else {
+            entity.set${coleccion}(null);
+        }`}
 `;
         }).join('');
     }
@@ -462,7 +461,7 @@ ${updateEntityFromDTO}
             });
         }
         code += this.generateHeredados(entity, 'update');
-        code += this.generateMuchosAMuchosToEntity(entity);
+        code += this.generateMuchosAMuchosToEntity(entity, { conservarOmitidos: true });
         return code;
     }
 

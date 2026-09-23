@@ -1,8 +1,10 @@
+import { rutaEntidad } from './NombresReservados.js';
 class ControllerGenerator {
-    constructor(entities, relationships, metadata) {
+    constructor(entities, relationships, metadata, politica = null) {
         this.entities = entities;
         this.relationships = relationships || [];
         this.metadata = metadata;
+        this.conPermisos = politica?.explicito === true;
     }
 
     isChildInInheritance(entityId) {
@@ -57,7 +59,7 @@ class ControllerGenerator {
 
     generateController(entity) {
         const pkType = this.getPrimaryKeyType(entity);
-        const entityPath = this.toKebabCase(entity.name);
+        const entityPath = rutaEntidad(entity.name);
         const relationshipEndpoints = this.generateRelationshipEndpoints(entity);
         const isCompositeKey = this.isCompositeKey(entity);
         return `package com.example.demo.controllers;
@@ -92,6 +94,7 @@ public class ${entity.name}Controller {
 
     private final ${entity.name}Service service;
     private final ${entity.name}Mapper mapper;
+${this.conPermisos ? '    @Autowired\n    private com.example.demo.config.Autorizacion autorizacion;' : ''}
 
     @Autowired
     public ${entity.name}Controller(${entity.name}Service service, ${entity.name}Mapper mapper) {
@@ -101,21 +104,35 @@ public class ${entity.name}Controller {
 
     /**
      * GET /api/${entityPath}
-     * Obtener todos los registros
+     * Sin página ni tamaño devuelve todos. pagina empieza en 0; tamano tiene tope 200.
+     * buscar filtra texto; orden acepta campo,asc o campo,desc; una FK acepta campoId.
      */
     @GetMapping
-    public ResponseEntity<Map<String, Object>> getAll() {
+    public ResponseEntity<Map<String, Object>> getAll(
+            @RequestParam(required = false) Integer pagina,
+            @RequestParam(required = false) Integer tamano,
+            @RequestParam(required = false) String buscar,
+            @RequestParam(required = false) String orden,
+            @RequestParam Map<String, String> filtros) {
         try {
-            List<${entity.name}> entities = service.findAll();
-            List<${entity.name}DTO> dtos = mapper.toDTOList(entities);
+            org.springframework.data.domain.Page<${entity.name}> resultado = service.buscar(pagina, tamano, buscar, orden, filtros);
+            List<${entity.name}DTO> dtos = mapper.toDTOList(resultado.getContent());
             
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);
             response.put("data", dtos);
-            response.put("total", dtos.size());
+            response.put("total", resultado.getTotalElements());
+            if (pagina != null || tamano != null) {
+                response.put("pagina", resultado.getNumber());
+                response.put("tamano", resultado.getSize());
+                response.put("paginas", resultado.getTotalPages());
+                response.put("hayMas", resultado.hasNext());
+            }
             response.put("message", dtos.isEmpty() ? "No hay registros disponibles" : "Registros obtenidos exitosamente");
             
             return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            return respuestaError(HttpStatus.BAD_REQUEST, e.getMessage());
         } catch (Exception e) {
             return handleError(e, "Error al obtener registros");
         }
@@ -362,6 +379,8 @@ ${relationshipEndpoints}
     }
 
     private ResponseEntity<Map<String, Object>> handleError(Exception e, String message) {
+${this.conPermisos ? `        if (e instanceof com.example.demo.exceptions.AccesoDenegadoException)
+            return respuestaError(HttpStatus.FORBIDDEN, e.getMessage());` : ''}
         Map<String, Object> response = new HashMap<>();
         response.put("success", false);
         response.put("message", message);
@@ -379,7 +398,7 @@ ${relationshipEndpoints}
 
     generateRelationshipEndpoints(entity) {
         let endpoints = '';
-        const entityPath = this.toKebabCase(entity.name);
+        const entityPath = rutaEntidad(entity.name);
         const pkType = this.getPrimaryKeyType(entity);
         const processedEndpoints = new Set();
         const allAttributes = this.getAllAttributes(entity);
@@ -426,6 +445,7 @@ ${relationshipEndpoints}
                     Map<String, Object> response = new HashMap<>();
                     response.put("success", true);
                     if (related != null) {
+${this.conPermisos ? `                        autorizacion.comprobar("${attr.referencedEntity}", "ver", related);` : ''}
                         Map<String, Object> relatedData = new HashMap<>();
                         relatedData.put("id", related.get${this.getIdGetter(referencedEntity)}());
                         response.put("data", relatedData);

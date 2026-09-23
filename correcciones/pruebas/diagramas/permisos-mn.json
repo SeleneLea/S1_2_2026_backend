@@ -1,0 +1,156 @@
+{
+  "nodes": [
+    {
+      "id": "cliente",
+      "type": "classNode",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "className": "Cliente",
+        "attributes": [
+          "id: string",
+          "nombre: string",
+          "correo: string"
+        ],
+        "methods": []
+      }
+    },
+    {
+      "id": "entrenador",
+      "type": "classNode",
+      "position": {
+        "x": 450,
+        "y": 0
+      },
+      "data": {
+        "className": "Entrenador",
+        "attributes": [
+          "id: string",
+          "nombre: string",
+          "correo: string"
+        ],
+        "methods": []
+      }
+    },
+    {
+      "id": "notaVenta",
+      "type": "classNode",
+      "position": {
+        "x": 200,
+        "y": 330
+      },
+      "data": {
+        "className": "NotaVenta",
+        "attributes": [
+          "id: int",
+          "descripcion: string",
+          "fecha: Date"
+        ],
+        "methods": []
+      }
+    },
+    {
+      "id": "objetivo",
+      "type": "classNode",
+      "position": {
+        "x": 200,
+        "y": 660
+      },
+      "data": {
+        "className": "Objetivo",
+        "attributes": [
+          "id: int",
+          "nombre: string"
+        ],
+        "methods": []
+      }
+    },
+    {
+      "id": "plan",
+      "type": "classNode",
+      "position": {
+        "x": 200,
+        "y": 990
+      },
+      "data": {
+        "className": "Plan",
+        "attributes": [
+          "id: int",
+          "nombre: string",
+          "semanas: int {min=1, max=52}"
+        ],
+        "methods": []
+      }
+    },
+    {
+      "id": "permisos",
+      "type": "classNode",
+      "position": {
+        "x": 900,
+        "y": 330
+      },
+      "data": {
+        "className": "Permisos",
+        "attributes": [
+          "CLIENTE: Plan ver propios",
+          "CLIENTE: Cliente ver propios",
+          "CLIENTE: Objetivo ver propios",
+          "ENTRENADOR: Plan todo asignados",
+          "ENTRENADOR: Cliente ver asignados",
+          "ENTRENADOR: Objetivo ver asignados",
+          "ENTRENADOR: NotaVenta ver,crear,borrar asignados",
+          "ENTRENADOR: Entrenador ver propios"
+        ],
+        "methods": []
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "cliente-nota",
+      "source": "cliente",
+      "target": "notaVenta",
+      "type": "umlEdge",
+      "data": {
+        "type": "Composition",
+        "startLabel": "1",
+        "endLabel": "*"
+      }
+    },
+    {
+      "id": "entrenador-nota",
+      "source": "entrenador",
+      "target": "notaVenta",
+      "type": "umlEdge",
+      "data": {
+        "type": "Association",
+        "startLabel": "1",
+        "endLabel": "*"
+      }
+    },
+    {
+      "id": "nota-objetivo",
+      "source": "notaVenta",
+      "target": "objetivo",
+      "type": "umlEdge",
+      "data": {
+        "type": "Composition",
+        "startLabel": "1",
+        "endLabel": "*"
+      }
+    },
+    {
+      "id": "objetivo-plan",
+      "source": "objetivo",
+      "target": "plan",
+      "type": "umlEdge",
+      "data": {
+        "type": "Association",
+        "startLabel": "*",
+        "endLabel": "*"
+      }
+    }
+  ]
+}

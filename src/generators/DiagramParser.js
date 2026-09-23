@@ -1,18 +1,27 @@
+import { validarRestricciones } from './RestriccionesUML.js';
+import { extraerPermisos } from './Permisos.js';
+
 class DiagramParser {
 
     parse(xmlString) {
         try {
-            const diagram = JSON.parse(xmlString);
+            const original = JSON.parse(xmlString);
+            const politica = extraerPermisos(original.elements, original.connections, original.permisos ?? original.permisosCrudos ?? null);
+            const diagram = { ...original, elements: politica.elementos, connections: politica.conexiones };
             const entities = this.extractEntities(diagram);
-            const relationships = this.extractRelationships(diagram);
             const manyToManyTables = this.extractManyToManyTables(diagram);
+            const ids = new Set([...entities, ...manyToManyTables].map(e => e.id));
+            const relationships = this.extractRelationships(diagram).filter(r => ids.has(r.source) && ids.has(r.target));
             return {
                 entities: entities,
                 relationships: relationships,
-                manyToManyTables: manyToManyTables
+                manyToManyTables: manyToManyTables,
+                permisosCrudos: politica.permisosCrudos
             };
         } catch (error) {
-            throw new Error(`Error parseando diagrama: ${error.message}`);
+            const fallo = new Error(`Error parseando diagrama: ${error.message}`, { cause: error });
+            if (error.code) fallo.code = error.code;
+            throw fallo;
         }
     }
 
@@ -38,7 +47,7 @@ class DiagramParser {
     }
 
     processAttributes(attributes) {
-        return attributes.map(attr => ({
+        return attributes.map(attr => validarRestricciones({
             name: attr.name,
             type: attr.type,
             sqlType: attr.sqlType,
@@ -51,6 +60,14 @@ class DiagramParser {
             referencedField: attr.referencedField,
             referencedType: attr.referencedType,
             isRelationshipAttribute: attr.isRelationshipAttribute || false,
+            obligatorio: attr.obligatorio !== false,
+            unico: attr.unico === true,
+            minimo: attr.minimo ?? null,
+            maximo: attr.maximo ?? null,
+            etiqueta: attr.etiqueta,
+            oculto: attr.oculto === true,
+            orden: attr.orden,
+            principal: attr.principal === true,
             defaultValue: attr.defaultValue
         }));
     }

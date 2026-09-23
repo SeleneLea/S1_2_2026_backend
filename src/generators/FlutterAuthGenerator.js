@@ -7,7 +7,8 @@
  */
 import { textoDart } from './FlutterNombres.js';
 
-export const authServicioDart = (nombreApp) => `import 'dart:convert';
+export const authServicioDart = (nombreApp) => `import 'dart:async';
+import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -24,14 +25,37 @@ class AuthService {
   static const String _claveNombre = 'sesion.nombre';
   static const String _claveCorreo = 'sesion.correo';
   static const String _claveGestiona = 'sesion.gestiona';
+  static const String _claveVinculacion = 'sesion.vinculacionPendiente';
 
   static String? token;
   static String? rol;
   static String? nombre;
   static String? correo;
   static bool puedeGestionar = false;
+  static bool vinculacionPendiente = false;
 
-  static bool get haySesion => (token ?? '').isNotEmpty;
+  static DateTime? get vencimiento {
+    try {
+      final valor = token;
+      if (valor == null || valor.split('.').length != 2) return null;
+      final datos = jsonDecode(utf8.decode(base64Url.decode(base64Url.normalize(valor.split('.').first))));
+      final vence = datos is Map ? datos['vence'] : null;
+      return vence is num ? DateTime.fromMillisecondsSinceEpoch(vence.toInt()) : null;
+    } catch (_) { return null; }
+  }
+
+  static bool get haySesion => vencimiento?.isAfter(DateTime.now()) ?? false;
+  static Future<void> Function()? alTerminarSesion;
+  static bool _cerrando = false;
+
+  static Future<void> terminarSesion() async {
+    if (_cerrando || token == null) return;
+    _cerrando = true;
+    try {
+      await cerrarSesion();
+      await alTerminarSesion?.call();
+    } finally { _cerrando = false; }
+  }
 
   static Map<String, String> get cabeceras => {
         'Content-Type': 'application/json; charset=utf-8',
@@ -47,6 +71,36 @@ class AuthService {
     nombre = datos.getString(_claveNombre);
     correo = datos.getString(_claveCorreo);
     puedeGestionar = datos.getBool(_claveGestiona) ?? false;
+    vinculacionPendiente = datos.getBool(_claveVinculacion) ?? false;
+    if (!haySesion) {
+      await cerrarSesion();
+      return;
+    }
+    await actualizarSesion();
+  }
+
+  /// Actualiza el rol de la cuenta si hay conexión; conserva una sesión vigente sin red.
+  static Future<void> actualizarSesion() async {
+    final tokenActual = token;
+    if (!haySesion || tokenActual == null) return;
+    try {
+      final respuesta = await http.get(Uri.parse('\${ApiConfig.baseUrl}/auth/yo'), headers: cabeceras)
+          .timeout(const Duration(seconds: 3));
+      // Una respuesta tardía nunca recupera una sesión que ya se cerró o se reemplazó.
+      if (token != tokenActual) return;
+      if (respuesta.statusCode == 401) {
+        await terminarSesion();
+        return;
+      }
+      if (respuesta.statusCode != 200) return;
+      final cuerpo = jsonDecode(utf8.decode(respuesta.bodyBytes));
+      final datos = cuerpo is Map ? cuerpo['data'] : null;
+      if (datos is Map && datos['rol'] is String) {
+        await _guardar({'token': tokenActual, ...Map<String, dynamic>.from(datos)});
+      }
+    } catch (_) {
+      // El vencimiento se sigue comprobando localmente cuando el backend no responde.
+    }
   }
 
   static Future<void> _guardar(Map<String, dynamic> datos) async {
@@ -55,12 +109,14 @@ class AuthService {
     nombre = datos['nombre'] as String?;
     correo = datos['correo'] as String?;
     puedeGestionar = datos['puedeGestionar'] == true;
+    vinculacionPendiente = datos.containsKey('referenciaId') && datos['referenciaId'] == null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_claveToken, token ?? '');
     await prefs.setString(_claveRol, rol ?? '');
     await prefs.setString(_claveNombre, nombre ?? '');
     await prefs.setString(_claveCorreo, correo ?? '');
     await prefs.setBool(_claveGestiona, puedeGestionar);
+    await prefs.setBool(_claveVinculacion, vinculacionPendiente);
   }
 
   static Future<void> cerrarSesion() async {
@@ -69,17 +125,20 @@ class AuthService {
     nombre = null;
     correo = null;
     puedeGestionar = false;
+    vinculacionPendiente = false;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
+    for (final clave in [_claveToken, _claveRol, _claveNombre, _claveCorreo, _claveGestiona, _claveVinculacion]) {
+      await prefs.remove(clave);
+    }
   }
 
   /// Roles disponibles en ${textoDart(nombreApp)} (los define el backend).
   static Future<List<String>> roles() async {
     try {
-      final r = await http.get(Uri.parse('\${ApiConfig.baseUrl}/auth/roles'), headers: cabeceras);
+      final r = await http.get(Uri.parse('\${ApiConfig.baseUrl}/auth/roles'), headers: cabeceras).timeout(ApiConfig.tiempoMaximo);
       final cuerpo = jsonDecode(utf8.decode(r.bodyBytes));
       final datos = cuerpo is Map ? cuerpo['data'] : null;
-      final lista = datos is Map ? datos['roles'] : null;
+      final lista = datos is Map ? (datos['registroPublico'] ?? datos['roles']) : null;
       return lista is List ? lista.map((e) => e.toString()).toList() : const [];
     } catch (_) {
       return const [];
@@ -99,7 +158,7 @@ class AuthService {
         Uri.parse('\${ApiConfig.baseUrl}\$ruta'),
         headers: cabeceras,
         body: jsonEncode(cuerpo),
-      );
+      ).timeout(ApiConfig.tiempoMaximo);
       final datos = jsonDecode(utf8.decode(r.bodyBytes));
       if (r.statusCode >= 200 && r.statusCode < 300 && datos is Map && datos['data'] is Map) {
         await _guardar(Map<String, dynamic>.from(datos['data'] as Map));
@@ -107,6 +166,8 @@ class AuthService {
       }
       if (datos is Map && datos['message'] is String) return datos['message'] as String;
       return 'No se pudo completar la operación (\${r.statusCode}).';
+    } on TimeoutException {
+      return 'El servidor tardó más de \${ApiConfig.tiempoMaximo.inSeconds} segundos en responder. Inténtalo de nuevo.';
     } catch (e) {
       return 'No se pudo conectar con el servidor. Revisa que esté encendido y la dirección de la app.';
     }
@@ -237,7 +298,8 @@ class _LoginScreenState extends State<LoginScreen> {
                         ? 'Un momento…'
                         : (_creandoCuenta ? 'Crear cuenta' : 'Entrar')),
                   ),
-                  TextButton(
+                  if (_roles.isEmpty) const Text('Las cuentas las crea quien administra.'),
+                  if (_roles.isNotEmpty) TextButton(
                     onPressed: _ocupado ? null : () => setState(() => _creandoCuenta = !_creandoCuenta),
                     child: Text(_creandoCuenta
                         ? 'Ya tengo cuenta: iniciar sesión'

@@ -1,0 +1,11 @@
+{
+  "nodes": [
+    { "id": "persona", "type": "classNode", "position": { "x": 0, "y": 0 }, "data": { "className": "Persona", "attributes": ["id: int", "nombre: string {3..50}", "correo: string {unico}"], "methods": [] } },
+    { "id": "empleado", "type": "classNode", "position": { "x": 0, "y": 320 }, "data": { "className": "Empleado", "attributes": ["legajo: string {unico, 1..20}", "salario: decimal {min=0}"], "methods": [] } },
+    { "id": "gerente", "type": "classNode", "position": { "x": 0, "y": 640 }, "data": { "className": "Gerente", "attributes": ["area: string", "nivel: int {min=1, max=5}"], "methods": [] } }
+  ],
+  "edges": [
+    { "id": "empleado-persona", "source": "empleado", "target": "persona", "type": "umlEdge", "data": { "type": "Generalization" } },
+    { "id": "gerente-empleado", "source": "gerente", "target": "empleado", "type": "umlEdge", "data": { "type": "Generalization" } }
+  ]
+}

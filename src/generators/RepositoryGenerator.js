@@ -43,6 +43,7 @@ class RepositoryGenerator {
 import com.example.demo.entities.${entity.name};
 ${relatedImports}
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -55,7 +56,7 @@ import java.util.Optional;
  * Proporciona operaciones CRUD y consultas personalizadas
  */
 @Repository
-public interface ${entity.name}Repository extends JpaRepository<${entity.name}, ${pkType}> {
+public interface ${entity.name}Repository extends JpaRepository<${entity.name}, ${pkType}>, JpaSpecificationExecutor<${entity.name}> {
 
 ${customMethods}
 }

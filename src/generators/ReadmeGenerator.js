@@ -1,3 +1,5 @@
+import { rutaEntidad } from './NombresReservados.js';
+import { detectarRoles } from './AuthGenerator.js';
 // Nombre de BD coherente con SpringBootProjectBuilder: se quita el timestamp
 // que el nombre de carpeta lleva para evitar colisiones.
 const dbNameLimpio = (projectName) => String(projectName)
@@ -9,8 +11,12 @@ const dbNameLimpio = (projectName) => String(projectName)
 
 class ReadmeGenerator {
     generate(projectName, entities, nombreBD = dbNameLimpio(projectName)) {
+        this.entities = entities;
+        this.relationships = this.relationships || [];
         const endpoints = this.generateEndpointDocumentation(entities);
         const entityDocs = this.generateEntityDocumentation(entities);
+        const roles = detectarRoles(entities.filter(e => !e.isAbstract && e.stereotype !== 'abstract'));
+        const publicos = roles.filter(r => !r.gestor).map(r => r.rol);
         return `# 🚀 ${projectName} - API REST con Spring Boot
 ## 📋 Descripción
 
@@ -101,6 +107,38 @@ java -jar target/${projectName}-1.0.0.jar
 \`\`\`
 
 La aplicación estará disponible en: **http://localhost:8080**
+
+## Inicio de sesión y administración de cuentas
+
+En una base vacía, el modo de demostración crea estas cuentas: ${roles.map(r => `\`${r.rol.toLowerCase()}@demo.com\``).join(', ')}.
+La clave de demostración inicial es \`12345678\`; puede cambiarse con \`AUTH_DEMO_CLAVE\` antes del primer arranque.
+
+\`POST /api/auth/login\` recibe \`{ "correo": "...", "clave": "..." }\` y devuelve \`data.token\`.
+Envía ese token en \`Authorization: Bearer <token>\` al consultar o modificar la API.
+Los roles de gestión son: **${roles.filter(r => r.gestor).map(r => r.rol).join(', ')}**.
+
+${publicos.length
+    ? `El registro público, en \`POST /api/auth/registro\`, admite únicamente estos roles: **${publicos.join(', ')}**.`
+    : 'Este diagrama no tiene roles de registro público. Las cuentas las crea quien administra; Flutter oculta la opción de registro.'}
+\`GET /api/auth/roles\` publica \`roles\`, \`gestores\` y \`registroPublico\`. Un cliente no puede darse un rol de gestión mediante el registro público.
+
+Con una cuenta de gestión se pueden usar:
+
+- \`GET /api/cuentas\`: listar cuentas sin sus claves ni hashes.
+- \`POST /api/cuentas\`: crear una cuenta con \`correo\`, \`clave\`, \`rol\` y \`nombre\`.
+- \`PUT /api/cuentas/{id}/rol\`: asignar un rol conocido usando \`{ "rol": "..." }\`.
+
+### Configuración fuera de una demostración
+
+Configura \`AUTH_DEMO=false\` y un \`AUTH_SECRET\` privado y estable antes de arrancar el servidor.
+Cada exportación incluye un secreto aleatorio distinto para pruebas; no publiques ese valor ni lo uses como secreto compartido de producción.
+Cambiar \`AUTH_SECRET\` invalida las sesiones existentes. Si se configura vacío, el servidor crea un secreto temporal y las sesiones se invalidan al reiniciar.
+
+Para crear al primer gestor con una base de cuentas vacía y \`AUTH_DEMO=false\`, define
+\`AUTH_INICIAL_CORREO\` y \`AUTH_INICIAL_CLAVE\` (al menos ocho caracteres). Se crea una sola vez;
+después puedes retirar esas variables y administrar las demás cuentas por \`/api/cuentas\`.
+Desactivar \`AUTH_DEMO\` impide crear cuentas de prueba nuevas: no borra las que ya existen.
+El sembrado de los datos del dominio se controla por separado con \`app.demo.datos\` en \`application.properties\`.
 
 ## � Integración con Flutter
 
@@ -385,7 +423,7 @@ ${regularAttrs.map(attr => `- \`${attr.name}\` (${attr.type})`).join('\n')}
     generateEndpointDocumentation(entities) {
         let docs = '';
         entities.forEach(entity => {
-            const entityPath = this.toKebabCase(entity.name);
+            const entityPath = rutaEntidad(entity.name);
             const pkType = this.getPrimaryKeyType(entity);
             docs += `
 ### ${entity.name} (\`/api/${entityPath}\`)
@@ -395,7 +433,8 @@ ${regularAttrs.map(attr => `- \`${attr.name}\` (${attr.type})`).join('\n')}
 | GET | \`/api/${entityPath}\` | Obtener todos los ${entity.name} |
 | GET | \`/api/${entityPath}/{id}\` | Obtener ${entity.name} por ID |
 | POST | \`/api/${entityPath}\` | Crear nuevo ${entity.name} |
-| PUT | \`/api/${entityPath}/{id}\` | Actualizar ${entity.name} |
+| PUT | \`/api/${entityPath}/{id}\` | Reemplazar todos los campos, incluidas listas vacías y valores opcionales nulos |
+| PATCH | \`/api/${entityPath}/{id}\` | Combinar campos no nulos enviados; una lista vacía elimina sus relaciones |
 | DELETE | \`/api/${entityPath}/{id}\` | Eliminar ${entity.name} |
 | GET | \`/api/${entityPath}/count\` | Contar total de registros |
 | GET | \`/api/${entityPath}/exists/{id}\` | Verificar si existe |
