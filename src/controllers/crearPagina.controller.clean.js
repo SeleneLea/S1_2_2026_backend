@@ -176,6 +176,7 @@ class CrearPaginaController {
     // pero el generador JPA espera que la entidad del lado "muchos" ya tenga un
     // atributo clave foranea. Aqui derivamos esas FK desde las cardinalidades.
     this.derivarClavesForaneas(convertedElements, convertedConnections);
+    this.alinearClavesDeHerencia(convertedElements, convertedConnections);
 
     return { elements: convertedElements, connections: convertedConnections };
   };
@@ -188,6 +189,35 @@ class CrearPaginaController {
   // Si varias relaciones unen las mismas dos clases (p. ej. "origen" y "destino"
   // de paradas a RedAristas), cada una lleva su propia FK con el nombre de su rol
   // o de su etiqueta; antes solo se creaba la primera y las demas se perdian.
+  /**
+   * En una herencia JPA (JOINED) el hijo comparte la clave del padre: Docente usa el "id" de
+   * Persona. Si el hijo no dibujaba su propio "id" se le ponía uno numérico por defecto, y
+   * cuando el padre usaba otro tipo (int o texto) el proyecto no compilaba, porque el setter
+   * heredado recibía un long. Aquí la clave del hijo se iguala a la del padre.
+   */
+  alinearClavesDeHerencia = (elements, connections) => {
+    const padreDe = new Map();
+    Object.values(connections).forEach((conn) => {
+      // La flecha de una generalización va del hijo (source) al padre (target)
+      if (conn.type === 'inheritance') padreDe.set(conn.source, conn.target);
+    });
+    const claveDe = (id, vistos = new Set()) => {
+      if (!id || vistos.has(id)) return null;
+      vistos.add(id);
+      const heredada = claveDe(padreDe.get(id), vistos);
+      if (heredada) return heredada;
+      return ((elements[id] || {}).attributes || []).find(a => a.isPrimaryKey) || null;
+    };
+    padreDe.forEach((padreId, hijoId) => {
+      const delPadre = claveDe(padreId);
+      const delHijo = ((elements[hijoId] || {}).attributes || []).find(a => a.isPrimaryKey);
+      if (!delPadre || !delHijo) return;
+      delHijo.name = delPadre.name;
+      delHijo.type = delPadre.type;
+      delHijo.sqlType = delPadre.sqlType || delHijo.sqlType;
+    });
+  };
+
   derivarClavesForaneas = (elements, connections) => {
     const esMuchos = (m) => typeof m === 'string' && m.includes('*');
     const grupos = new Map();

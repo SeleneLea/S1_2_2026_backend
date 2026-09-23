@@ -949,15 +949,16 @@ ${code}`;
      * Obtiene el tipo Java del PK considerando herencia
      */
     getPrimaryKeyType(entity) {
-        const pkAttr = entity.attributes.find(attr => attr.isPrimaryKey);
-        if (pkAttr) return this.mapTypeToJava(pkAttr.type);
-        
-        // Si no tiene PK propio, buscar en el padre (herencia)
+        // En una herencia la clave es la del padre, aunque el hijo tenga una propia declarada:
+        // comparten la misma columna, y con tipos distintos el proyecto no compila.
         const parentEntity = this.isChildInInheritance(entity.id) ? this.getParentEntity(entity.id) : null;
         if (parentEntity) {
-            return this.getPrimaryKeyType(parentEntity); // Recursivo
+            return this.getPrimaryKeyType(parentEntity); // Recursivo para herencia multinivel
         }
-        
+
+        const pkAttr = entity.attributes.find(attr => attr.isPrimaryKey);
+        if (pkAttr) return this.mapTypeToJava(pkAttr.type);
+
         return 'Long';
     }
 

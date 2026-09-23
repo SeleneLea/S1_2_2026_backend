@@ -115,11 +115,22 @@ const fechaPara = (campo, i) => {
     return `LocalDate.now().minusDays(${(i + 1) * 7})`;
 };
 
+/**
+ * Recorta el texto al largo que declara la columna: la entidad lleva @Size(max = N) y un
+ * varchar(10) rechazaría "Descripción de ejemplo 1" al arrancar.
+ */
+const recortar = (texto, attr) => {
+    const sql = String(attr.sqlType || '');
+    if (/^TEXT$/i.test(sql)) return texto;
+    const largo = Number((sql.match(/\d+/) || [255])[0]);
+    return texto.length > largo ? texto.slice(0, largo) : texto;
+};
+
 /** Valor de ejemplo para un campo suelto. Devuelve null si el tipo no se sabe sembrar. */
 const valorLiteral = (attr, tipoJava, i, contexto) => {
     const campo = sinTildes(attr.name).toLowerCase();
     switch (tipoJava) {
-        case 'String': return textoJava(textoPara(campo, i, contexto));
+        case 'String': return textoJava(recortar(textoPara(campo, i, contexto), attr));
         case 'Integer': return String(enteroPara(campo, i));
         case 'Long': return `${enteroPara(campo, i)}L`;
         case 'Double': return decimalPara(campo, i);
@@ -162,6 +173,34 @@ const ordenarPorDependencias = (entidades) => {
     return orden;
 };
 
+/**
+ * Atributos de la clase más los que hereda, sin repetir.
+ *
+ * En una herencia el hijo usa los setters del padre: si no se llenan, los campos obligatorios
+ * del padre (nombre, correo, teléfono…) quedan nulos y la siembra revienta al guardar.
+ */
+const atributosConHerencia = (generador, entidad) => {
+    const cadena = [entidad];
+    let actual = entidad;
+    while (actual && generador.isChildInInheritance(actual.id)) {
+        const padre = generador.getParentEntity(actual.id);
+        if (!padre || cadena.includes(padre)) break;
+        cadena.push(padre);
+        actual = padre;
+    }
+    const vistos = new Set();
+    const acumulado = [];
+    cadena.forEach((clase) => {
+        (clase.attributes || []).forEach((attr) => {
+            const nombre = String(attr.name || '').toLowerCase();
+            if (vistos.has(nombre)) return;
+            vistos.add(nombre);
+            acumulado.push(attr);
+        });
+    });
+    return acumulado;
+};
+
 const claveDe = (entidad) => (entidad.attributes || []).find((a) => a.isPrimaryKey) || null;
 
 /** Clases que sí se pueden sembrar: con una sola clave propia y sin herencia de por medio. */
@@ -194,8 +233,11 @@ export const datosDemo = (nombreApp, entidades, relaciones = []) => {
             prefijo: prefijoDe(clase),
             archivo: sinTildes(clase).toLowerCase()
         };
-        const propios = (entidad.attributes || []).filter((a) => !a.isPrimaryKey && !a.isForeignKey);
-        const foraneos = (entidad.attributes || [])
+        // Con herencia hay que llenar también lo del padre: Estudiante hereda de Persona el
+        // nombre y el correo, que son obligatorios, y sin ellos el arranque falla.
+        const heredados = atributosConHerencia(generador, entidad);
+        const propios = heredados.filter((a) => !a.isPrimaryKey && !a.isForeignKey);
+        const foraneos = heredados
             .filter((a) => a.isForeignKey && a.referencedEntity && listaDe.has(a.referencedEntity));
 
         const objetos = [];
