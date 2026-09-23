@@ -1,0 +1,63 @@
+# Blueprint de Render: un solo servicio web (API + Socket.IO + frontend compilado) y PostgreSQL.
+# Todo queda en la misma URL, así la cookie de sesión funciona en cualquier navegador y no hay CORS.
+# Guía paso a paso: DESPLIEGUE-RENDER.md
+
+services:
+  - type: web
+    name: diagramador-uml
+    runtime: node
+    region: virginia
+    # free se duerme tras 15 min sin visitas (tarda ~1 min en despertar y corta la colaboración).
+    # Para la defensa cambiar a starter desde el panel de Render (Settings > Instance Type).
+    plan: free
+    # El frontend vive en otro repositorio (público): se clona y compila junto al backend.
+    # Los cambios en el frontend se publican con un deploy manual o con su GitHub Action.
+    # ONNXRUNTIME_NODE_INSTALL=skip: onnxruntime-node (dependencia de @huggingface/transformers)
+    # intenta descargar binarios CUDA en Linux; la IA local corre en el navegador y no los usa.
+    buildCommand: >-
+      rm -rf .frontend &&
+      git clone --depth 1 --branch main https://github.com/Calvimontes99/SW1_Frontend_P1_02_2026.git .frontend &&
+      ONNXRUNTIME_NODE_INSTALL=skip npm ci --prefix .frontend --include=dev &&
+      npm run build --prefix .frontend &&
+      npm ci --omit=dev
+    startCommand: npm start
+    # Cada push a main vuelve a desplegar sin tener que entrar al panel
+    autoDeploy: true
+    healthCheckPath: /apis/health/db
+    # No escalar a más de una instancia: el estado de las salas en edición vive en la memoria
+    # del proceso y los usuarios de una misma sala dejarían de verse entre sí.
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: NODE_ENV
+        value: production
+      - key: FRONTEND_DIST
+        value: .frontend/dist
+      - key: DATABASE_URL
+        fromDatabase:
+          name: diagramador-db
+          property: connectionString
+      - key: TOKEN_SECRET
+        generateValue: true
+      # Claves de Gemini separadas por coma; Render las pide al crear el Blueprint.
+      # Si se deja vacía, queda solo la IA local del navegador.
+      - key: GEMINI_API_KEYS
+        sync: false
+      # Contraseña de las cuentas prueba1@gmail.com y prueba2@gmail.com, que se crean al arrancar.
+      # Es pública a propósito (servidor de pruebas); para un uso real, quitarla o cambiarla.
+      # Borrar la variable deja las cuentas como estén.
+      - key: CLAVE_USUARIOS_PRUEBA
+        value: "12345678"
+      # Si un modelo está saturado (503) se prueba el siguiente
+      - key: GEMINI_MODELS
+        value: gemini-2.5-flash,gemini-2.5-flash-lite,gemini-flash-lite-latest,gemini-2.5-pro
+
+databases:
+  - name: diagramador-db
+    databaseName: diagramador
+    user: diagramador
+    region: virginia
+    postgresMajorVersion: "16"
+    # free se BORRA a los 30 días de creada. Para conservar los datos cambiar a basic-256mb
+    # desde el panel antes de ese plazo.
+    plan: free
