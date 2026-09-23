@@ -16,6 +16,7 @@ class FlutterMainGenerator {
 
     generateMain() {
         return `import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
@@ -37,6 +38,14 @@ class MiApp extends StatelessWidget {
       title: '${textoDart(this.titulo)}',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(colorSchemeSeed: Colors.indigo, useMaterial3: true),
+      // Calendarios, botones y mensajes del sistema en espanol
+      locale: const Locale('es'),
+      supportedLocales: const [Locale('es'), Locale('en')],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       home: AuthService.haySesion ? const HomeScreen() : const LoginScreen(),
     );
   }
@@ -55,6 +64,8 @@ environment:
 
 dependencies:
   flutter:
+    sdk: flutter
+  flutter_localizations:
     sdk: flutter
   http: ^1.2.0
   shared_preferences: ^2.3.2

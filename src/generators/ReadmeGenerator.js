@@ -449,10 +449,15 @@ ${regularAttrs.map(attr => `- \`${attr.name}\` (${attr.type})`).join('\n')}
         return str.replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '');
     }
 
+    /** La misma ruta que publica el controlador: minúsculas, con guiones y sin tildes. */
     toKebabCase(str) {
-        return str
+        return String(str)
             .replace(/([a-z])([A-Z])/g, '$1-$2')
-            .toLowerCase();
+            .normalize('NFD')
+            .replace(/[̀-ͯ]/g, '')
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '');
     }
 
     toCamelCase(str) {

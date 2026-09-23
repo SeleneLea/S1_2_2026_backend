@@ -154,13 +154,7 @@ public class ${entity.name}Controller {
     @PostMapping
     public ResponseEntity<Map<String, Object>> create(@Valid @RequestBody ${entity.name}DTO dto) {
         try {
-            ${entity.name} entity = mapper.toEntity(dto);${this.claveLaGeneraLaBase(entity) ? `
-            // El ID lo asigna la base de datos: se ignora el que envíe el cliente
-            entity.${this.getPrimaryKeySetter(entity)}(null);` : (this.getPrimaryKeyGetter(entity) ? `
-            // La clave no es automática (no es numérica): la envía quien crea el registro
-            if (entity.${this.getPrimaryKeyGetter(entity)}() == null || String.valueOf(entity.${this.getPrimaryKeyGetter(entity)}()).isBlank()) {
-                return respuestaError(HttpStatus.BAD_REQUEST, "Falta el campo ${this.getPrimaryKeyName(entity)}, que identifica el registro.");
-            }` : '')}
+            ${entity.name} entity = mapper.toEntity(dto);${this.asignacionDeClave(entity)}
             ${entity.name} created = service.create(entity);
             ${entity.name}DTO createdDTO = mapper.toDTO(created);
             
@@ -490,6 +484,56 @@ ${relationshipEndpoints}
      * entidad; con una clave de texto hay que respetar la que envía el cliente, porque si se anula
      * Hibernate responde "Identifier must be manually assigned" y no se puede crear nada.
      */
+    /**
+     * Qué hacer con la clave al crear un registro.
+     *
+     * Si es numérica la pone la base (se ignora la que llegue). Si es de texto y quien crea no
+     * la manda —la app móvil no la pide, y en un prototipo nadie quiere inventarse códigos— el
+     * sistema le arma uno legible y único: CLI-3f9a2b71. Si la manda, se respeta.
+     */
+    asignacionDeClave(entity) {
+        const setter = this.getPrimaryKeySetter(entity);
+        const getter = this.getPrimaryKeyGetter(entity);
+        if (!setter || !getter) return '';
+        if (this.claveLaGeneraLaBase(entity)) {
+            return `
+            // El ID lo asigna la base de datos: se ignora el que envíe el cliente
+            entity.${setter}(null);`;
+        }
+        const tipo = this.getPrimaryKeyType(entity);
+        const falta = `entity.${getter}() == null || String.valueOf(entity.${getter}()).isBlank()`;
+        if (tipo === 'String') {
+            const prefijo = this.prefijoDeClave(entity);
+            return `
+            // La clave es de texto: si no llega ninguna, el sistema le pone un código único
+            if (${falta}) {
+                entity.${setter}("${prefijo}-" + java.util.UUID.randomUUID().toString().substring(0, 8));
+            }`;
+        }
+        if (tipo === 'UUID') {
+            return `
+            // La clave es un UUID: si no llega ninguno, se genera aquí
+            if (entity.${getter}() == null) {
+                entity.${setter}(java.util.UUID.randomUUID());
+            }`;
+        }
+        return `
+            // La clave no es automática ni de texto: la envía quien crea el registro
+            if (${falta}) {
+                return respuestaError(HttpStatus.BAD_REQUEST, "Falta el campo ${this.getPrimaryKeyName(entity)}, que identifica el registro.");
+            }`;
+    }
+
+    /** Prefijo corto para las claves de texto: Cliente -> CLI, NotaVenta -> NOT. */
+    prefijoDeClave(entity) {
+        const limpio = String(entity.name || '')
+            .normalize('NFD')
+            .replace(/[̀-ͯ]/g, '')
+            .replace(/[^A-Za-z0-9]/g, '')
+            .toUpperCase();
+        return limpio.slice(0, 3) || 'REG';
+    }
+
     claveLaGeneraLaBase(entity) {
         if (!this.getPrimaryKeySetter(entity)) return false;
         const tipo = this.getPrimaryKeyType(entity);
@@ -580,10 +624,18 @@ ${relationshipEndpoints}
         return this.capitalize(normalizedName);
     }
 
+    /**
+     * Ruta REST de la entidad: minúsculas, con guiones y sin tildes. Una URL con "í" o "ñ"
+     * obliga a escaparla (/api/v%C3%ADdeo) y rompe a quien pruebe la API desde fuera de la app.
+     */
     toKebabCase(str) {
-        return str
+        return String(str)
             .replace(/([a-z])([A-Z])/g, '$1-$2')
-            .toLowerCase();
+            .normalize('NFD')
+            .replace(/[̀-ͯ]/g, '')
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '');
     }
 
     toCamelCase(str) {

@@ -154,10 +154,15 @@ class BaseService {
 `;
     }
 
+    /** Misma ruta que el controlador de Spring Boot: minúsculas, con guiones y sin tildes. */
     toKebabCase(str) {
-        return str
+        return String(str)
             .replace(/([a-z])([A-Z])/g, '$1-$2')
-            .toLowerCase();
+            .normalize('NFD')
+            .replace(/[̀-ͯ]/g, '')
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '');
     }
 }
 

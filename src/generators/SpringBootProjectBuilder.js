@@ -10,6 +10,7 @@ import { controladorAsistente, propiedadesAsistente, servicioAsistente } from '.
 import {
     controladorAuth, detectarRoles, entidadUsuario, filtroAuth, propiedadesAuth, repositorioUsuario, servicioAuth
 } from './AuthGenerator.js';
+import { datosDemo, propiedadesDemo } from './SeedGenerator.js';
 import EntityGenerator from './EntityGenerator.js';
 import ManyToManyEntityGenerator from './ManyToManyEntityGenerator.js';
 import RepositoryGenerator from './RepositoryGenerator.js';
@@ -78,6 +79,7 @@ class SpringBootProjectBuilder {
         this.generateConfigClasses();
         this.generateAutenticacion();
         this.generateAsistente();
+        this.generateDatosDemo();
         this.generateMainApplication();
         this.generateAuxiliares();
         this.generateReadme();
@@ -132,6 +134,22 @@ class SpringBootProjectBuilder {
             fs.appendFileSync(propiedades, propiedadesAsistente());
         }
         console.log('✅ Asistente de IA generado (endpoint /api/asistente)');
+    }
+
+    /**
+     * Datos de ejemplo: al arrancar con la base vacía el proyecto se siembra solo, para que las
+     * listas de la app y del backend tengan algo que mostrar y las relaciones se vean funcionando.
+     */
+    generateDatosDemo() {
+        const configuracion = path.join(this.projectPath, 'src/main/java/com/example/demo/config');
+        fs.mkdirSync(configuracion, { recursive: true });
+        fs.writeFileSync(
+            path.join(configuracion, 'DatosDemo.java'),
+            datosDemo(this.nombreProyecto, this.entidadesConcretas, this.parsedDiagram.relationships)
+        );
+        const propiedades = path.join(this.projectPath, 'src/main/resources/application.properties');
+        if (fs.existsSync(propiedades)) fs.appendFileSync(propiedades, propiedadesDemo());
+        console.log('✅ Datos de ejemplo generados (se siembran al arrancar con la base vacía)');
     }
 
     /**

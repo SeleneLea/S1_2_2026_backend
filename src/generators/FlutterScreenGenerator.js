@@ -153,11 +153,28 @@ class _Entrada {
         const textoTitulo = descriptivo
             ? `registro.${this.campo(descriptivo)} ?? '-'`
             : `'${titulo} #\${registro.${pk.nombre}}'`;
+        // Una fecha cruda se ve como "2026-09-14 00:00:00.000": en la lista va en formato corto
+        const hayFechas = otros.some(a => tipoDart(a.type) === 'DateTime');
         const partes = [
             `ID: \${registro.${pk.nombre}}`,
-            ...otros.map(a => `${textoDart(etiquetaCampo(claveDeAtributo(a)))}: \${registro.${this.campo(a)} ?? '-'}`)
+            ...otros.map((a) => {
+                const etiqueta = textoDart(etiquetaCampo(claveDeAtributo(a)));
+                const valor = tipoDart(a.type) === 'DateTime'
+                    ? `\${_fechaCorta(registro.${this.campo(a)}, ${esSoloFecha(a.type)})}`
+                    : `\${registro.${this.campo(a)} ?? '-'}`;
+                return `${etiqueta}: ${valor}`;
+            })
         ];
         const textoSubtitulo = `'${partes.join(' · ')}'`;
+        const ayudaFecha = !hayFechas ? '' : `
+  /// Fecha en formato corto para la lista: 14/09/2026 (con la hora solo si el campo la lleva).
+  String _fechaCorta(DateTime? valor, bool soloFecha) {
+    if (valor == null) return '-';
+    String dos(int numero) => numero.toString().padLeft(2, '0');
+    final dia = '\${dos(valor.day)}/\${dos(valor.month)}/\${valor.year}';
+    return soloFecha ? dia : '\$dia \${dos(valor.hour)}:\${dos(valor.minute)}';
+  }
+`;
 
         return `import 'package:flutter/material.dart';
 
@@ -226,7 +243,7 @@ class _${clase}ListScreenState extends State<${clase}ListScreen> {
       _mostrar('$e');
     }
   }
-
+${ayudaFecha}
   @override
   Widget build(BuildContext context) {
     return Scaffold(
