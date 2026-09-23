@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, readdir, writeFile, access } from 'node:fs/pr
 
 export const raizBackend = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const carpetaDiagramas = path.join(raizBackend, 'correcciones/pruebas/diagramas');
-const temasEjemplo = ['tienda', 'biblioteca', 'clinica', 'academico', 'bancario'];
+const temasEjemplo = ['tienda', 'biblioteca', 'clinica', 'academico', 'bancario', 'gimnasio', 'gimnasio-permisos', 'salud'];
 let modulos;
 
 export async function cargarGeneradores() {

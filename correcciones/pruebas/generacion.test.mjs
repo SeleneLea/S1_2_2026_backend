@@ -38,8 +38,8 @@ before(async () => {
   await writeFile(path.join(salida, 'manifest.json'), JSON.stringify({ version: 1, salida, casos: [...salidas.values()], fallos: [] }, null, 2));
 });
 
-test('el catálogo incluye cinco tableros reales y siete diagramas difíciles', () => {
-  assert.deepEqual([...salidas.keys()].sort(), ['tienda', 'biblioteca', 'clinica', 'academico', 'bancario', 'nombres-conflictivos', 'relaciones-opcionales', 'validaciones', 'herencia-profunda', 'fechas-y-horas', 'permisos', 'permisos-mn'].sort());
+test('el catálogo incluye ocho tableros reales y siete diagramas difíciles', () => {
+  assert.deepEqual([...salidas.keys()].sort(), ['tienda', 'biblioteca', 'clinica', 'academico', 'bancario', 'gimnasio', 'gimnasio-permisos', 'salud', 'nombres-conflictivos', 'relaciones-opcionales', 'validaciones', 'herencia-profunda', 'fechas-y-horas', 'permisos', 'permisos-mn'].sort());
 });
 
 test('01: Usuario conserva su atributo y su tipo de ID; la cuenta de acceso ocupa otra tabla', async () => {

@@ -381,7 +381,7 @@ ${inversas.map(r => `        existing.set${this.capitalize(r.propiedad)}(new Arr
     @Override
     @Transactional(readOnly = true)
     public boolean existsById(${pkType} id) {
-        return ${seguro ? `repository.exists(this.autorizacion.<${entity.name}>alcance("${entity.name}", "ver").and((raiz, consulta, cb) -> cb.equal(raiz.get("${this.toCamelCase(pkName)}"), id)))` : 'repository.existsById(id)'};
+        return ${seguro ? `repository.exists(this.autorizacion.<${entity.name}>alcance("${entity.name}", "ver").and((raizJpa, consultaJpa, cbJpa) -> cbJpa.equal(raizJpa.get("${this.toCamelCase(pkName)}"), id)))` : 'repository.existsById(id)'};
     }
 
     @Override
@@ -650,13 +650,13 @@ ${inversas.map(r => {
                 implementations += `    @Override
     @Transactional(readOnly = true)
     public List<${entity.name}> findBy${capName}(${javaType} ${normalizedName}) {
-        return ${this.conPermisos ? `repository.findAll(this.autorizacion.<${entity.name}>alcance("${entity.name}", "ver").and((raiz, consulta, cb) -> cb.equal(raiz.get("${normalizedName}"), ${normalizedName})))` : `repository.findBy${capName}(${normalizedName})`};
+        return ${this.conPermisos ? `repository.findAll(this.autorizacion.<${entity.name}>alcance("${entity.name}", "ver").and((raizJpa, consultaJpa, cbJpa) -> cbJpa.equal(raizJpa.get("${normalizedName}"), ${normalizedName})))` : `repository.findBy${capName}(${normalizedName})`};
     }
 
     @Override
     @Transactional(readOnly = true)
     public boolean existsBy${capName}(${javaType} ${normalizedName}) {
-        return ${this.conPermisos ? `repository.exists(this.autorizacion.<${entity.name}>alcance("${entity.name}", "ver").and((raiz, consulta, cb) -> cb.equal(raiz.get("${normalizedName}"), ${normalizedName})))` : `repository.existsBy${capName}(${normalizedName})`};
+        return ${this.conPermisos ? `repository.exists(this.autorizacion.<${entity.name}>alcance("${entity.name}", "ver").and((raizJpa, consultaJpa, cbJpa) -> cbJpa.equal(raizJpa.get("${normalizedName}"), ${normalizedName})))` : `repository.existsBy${capName}(${normalizedName})`};
     }
 
 `;
@@ -677,19 +677,19 @@ ${inversas.map(r => {
                 implementations += `    @Override
     @Transactional(readOnly = true)
     public List<${entity.name}> findBy${capFieldName}(${attr.referencedEntity} ${normalizedFieldName}) {
-        return ${this.conPermisos ? `repository.findAll(this.autorizacion.<${entity.name}>alcance("${entity.name}", "ver").and((raiz, consulta, cb) -> cb.equal(raiz.get("${normalizedFieldName}"), ${normalizedFieldName})))` : `repository.findBy${capFieldName}(${normalizedFieldName})`};
+        return ${this.conPermisos ? `repository.findAll(this.autorizacion.<${entity.name}>alcance("${entity.name}", "ver").and((raizJpa, consultaJpa, cbJpa) -> cbJpa.equal(raizJpa.get("${normalizedFieldName}"), ${normalizedFieldName})))` : `repository.findBy${capFieldName}(${normalizedFieldName})`};
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<${entity.name}> findBy${capFieldName}${capPkName}(${pkType} ${normalizedFieldName}${capPkName}) {
-        return ${this.conPermisos ? `repository.findAll(this.autorizacion.<${entity.name}>alcance("${entity.name}", "ver").and((raiz, consulta, cb) -> cb.equal(raiz.get("${normalizedFieldName}").get("${normalizedPkName}"), ${normalizedFieldName}${capPkName})))` : `repository.findBy${capFieldName}${capPkName}(${normalizedFieldName}${capPkName})`};
+        return ${this.conPermisos ? `repository.findAll(this.autorizacion.<${entity.name}>alcance("${entity.name}", "ver").and((raizJpa, consultaJpa, cbJpa) -> cbJpa.equal(raizJpa.get("${normalizedFieldName}").get("${normalizedPkName}"), ${normalizedFieldName}${capPkName})))` : `repository.findBy${capFieldName}${capPkName}(${normalizedFieldName}${capPkName})`};
     }
 
     @Override
     @Transactional(readOnly = true)
     public long countBy${capFieldName}(${attr.referencedEntity} ${normalizedFieldName}) {
-        return ${this.conPermisos ? `repository.count(this.autorizacion.<${entity.name}>alcance("${entity.name}", "ver").and((raiz, consulta, cb) -> cb.equal(raiz.get("${normalizedFieldName}"), ${normalizedFieldName})))` : `repository.countBy${capFieldName}(${normalizedFieldName})`};
+        return ${this.conPermisos ? `repository.count(this.autorizacion.<${entity.name}>alcance("${entity.name}", "ver").and((raizJpa, consultaJpa, cbJpa) -> cbJpa.equal(raizJpa.get("${normalizedFieldName}"), ${normalizedFieldName})))` : `repository.countBy${capFieldName}(${normalizedFieldName})`};
     }
 
 `;

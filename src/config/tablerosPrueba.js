@@ -235,7 +235,180 @@ const banco = {
     ]
 };
 
-export const TABLEROS_PRUEBA = [tienda, biblioteca, clinica, academico, banco];
+// ---------------------------------------------------------------- 6. Gimnasio (del diagrama del parcial)
+// Las dos clases asociación del diagrama se escriben como clase con sus dos claves foráneas,
+// que es en lo que se convierten al pasar al modelo lógico: Plan une Ejercicio con Objetivo
+// ("conforma") y DetallePlan une Plan con Día ("distribuye").
+const gimnasio = {
+    titulo: 'Gimnasio',
+    descripcion: 'Diagrama del parcial: entrenadores, clientes, planes y ejercicios (10 clases).',
+    nodes: [
+        clase('gym-entrenador', 'Entrenador', 460, 0,
+            ['id: string', 'nombre: string', 'apellido: string', 'email: string', 'sexo: string', 'telefono: string'],
+            ['emitirNotaVenta(): NotaVenta']),
+        clase('gym-notaventa', 'NotaVenta', 900, 0,
+            ['id: string', 'fecha: Date', 'total: float'],
+            ['calcularTotal(): float']),
+        clase('gym-cliente', 'Cliente', 1340, 0,
+            ['id: string', 'ci: string', 'nombre: string', 'apellido: string', 'telefono: string',
+                'sexo: string', 'edad: int', 'peso: float'],
+            ['inscribirse(): void']),
+        clase('gym-foto', 'Foto', 0, 340,
+            ['id: string', 'url: string'], []),
+        clase('gym-video', 'Video', 0, 640,
+            ['id: string', 'url: string'], []),
+        clase('gym-ejercicio', 'Ejercicio', 460, 400,
+            ['id: string', 'nombre: string', 'descripcion: string'], []),
+        clase('gym-objetivo', 'Objetivo', 900, 400,
+            ['id: string', 'nombre: string', 'precio: float'], []),
+        clase('gym-plan', 'Plan', 680, 760,
+            ['id: string', 'nombre: string'], []),
+        clase('gym-dia', 'Dia', 680, 1100,
+            ['id: string', 'nombre: string'], []),
+        clase('gym-detalleplan', 'DetallePlan', 1200, 930,
+            ['id: int', 'series: int', 'repeticiones: int'], [])
+    ],
+    edges: [
+        rel('gym-entrenador-notaventa', 'gym-entrenador', 'gym-notaventa', 'Association', '1', '1..*'),
+        rel('gym-cliente-notaventa', 'gym-cliente', 'gym-notaventa', 'Association', '1', '1..*'),
+        rel('gym-notaventa-objetivo', 'gym-notaventa', 'gym-objetivo', 'Association', '1', '1..*'),
+        rel('gym-ejercicio-foto', 'gym-ejercicio', 'gym-foto', 'Composition', '1', '0..*'),
+        rel('gym-ejercicio-video', 'gym-ejercicio', 'gym-video', 'Composition', '1', '0..*'),
+        // "conforma": Ejercicio 1..* — 1..* Objetivo, con Plan como clase asociación
+        rel('gym-ejercicio-plan', 'gym-ejercicio', 'gym-plan', 'Association', '1', '1..*'),
+        rel('gym-objetivo-plan', 'gym-objetivo', 'gym-plan', 'Association', '1', '1..*'),
+        // "distribuye": Plan 1..* — 1..* Día, con DetallePlan como clase asociación
+        rel('gym-plan-detalleplan', 'gym-plan', 'gym-detalleplan', 'Association', '1', '1..*'),
+        rel('gym-dia-detalleplan', 'gym-dia', 'gym-detalleplan', 'Association', '1', '1..*')
+    ]
+};
+
+// ---------------------------------------------------------------- 7. Gimnasio con permisos
+// El mismo diagrama con la clase Permisos: muestra cómo se limita cada rol. Sin esa clase
+// (tablero anterior) todos los roles consultan todo y solo los de gestión modifican.
+const gimnasioConPermisos = {
+    titulo: 'Gimnasio con permisos',
+    descripcion: 'El gimnasio con la clase Permisos: el cliente solo ve lo suyo y el entrenador lo de sus clientes.',
+    nodes: [
+        ...gimnasio.nodes.map((n) => ({ ...n, id: `perm-${n.id}` })),
+        clase('perm-gym-permisos', 'Permisos', 1340, 760, [
+            'CLIENTE: Cliente ver propios',
+            'CLIENTE: NotaVenta ver propios',
+            'CLIENTE: Objetivo ver propios',
+            'CLIENTE: Plan ver propios',
+            'CLIENTE: Ejercicio ver todos',
+            'CLIENTE: Foto ver todos',
+            'CLIENTE: Video ver todos',
+            'ENTRENADOR: Entrenador ver propios',
+            'ENTRENADOR: Cliente ver asignados',
+            'ENTRENADOR: NotaVenta ver,crear,editar asignados',
+            'ENTRENADOR: Objetivo ver,crear,editar asignados',
+            'ENTRENADOR: Plan todo asignados',
+            'ENTRENADOR: Ejercicio todo todos',
+            'ENTRENADOR: Foto todo todos',
+            'ENTRENADOR: Video todo todos',
+            'ENTRENADOR: Dia todo todos',
+            'ENTRENADOR: DetallePlan todo todos'
+        ], [])
+    ],
+    edges: gimnasio.edges.map((e) => ({
+        ...e,
+        id: `perm-${e.id}`,
+        source: `perm-${e.source}`,
+        target: `perm-${e.target}`
+    }))
+};
+
+// ---------------------------------------------------------------- 8. Historia clínica (caso del examen)
+// Caso del enunciado: historia clínica electrónica fiscalizada, ficha de atención generada por
+// una IA de triaje, atención por videoconferencia, exámenes digitalizados y certificados con
+// cadena de bloques. El paciente solo ve su propia historia.
+const salud = {
+    titulo: 'Historia clínica electrónica',
+    descripcion: 'Caso del examen: fichas con triaje por IA, teleconsulta, exámenes y certificados (13 clases).',
+    nodes: [
+        clase('salud-paciente', 'Paciente', 0, 0,
+            ['id: int', 'ci: string', 'nombre: string', 'apellido: string', 'fechaNacimiento: Date',
+                'sexo: string', 'telefono: string'],
+            ['edad(): int']),
+        clase('salud-historia', 'HistoriaClinica', 0, 380,
+            ['id: int', 'fechaApertura: Date', 'observaciones: text'],
+            ['resumen(): string']),
+        clase('salud-ficha', 'FichaAtencion', 460, 0,
+            ['id: int', 'fecha: DateTime', 'motivo: string', 'estado: string', 'modalidad: string'],
+            ['anular(): void']),
+        clase('salud-triaje', 'TriajeIA', 920, 0,
+            ['id: int', 'fecha: DateTime', 'sintomas: text', 'urgencia: string', 'recomendacion: text'],
+            ['requierePresencial(): boolean']),
+        clase('salud-consulta', 'Consulta', 460, 380,
+            ['id: int', 'fecha: DateTime', 'modalidad: string', 'diagnostico: text', 'tratamiento: text'],
+            ['esTeleconsulta(): boolean']),
+        clase('salud-medico', 'Medico', 920, 380,
+            ['id: int', 'ci: string', 'nombre: string', 'apellido: string', 'especialidad: string', 'matricula: string'],
+            ['atender(): Consulta']),
+        clase('salud-centro', 'CentroMedico', 1380, 380,
+            ['id: int', 'nombre: string', 'nivel: string', 'direccion: string', 'ciudad: string'], []),
+        clase('salud-examen', 'Examen', 460, 760,
+            ['id: int', 'fecha: DateTime', 'tipo: string', 'resultado: text'],
+            ['estaListo(): boolean']),
+        clase('salud-laboratorio', 'ExamenLaboratorio', 0, 1100,
+            ['analito: string', 'valor: decimal', 'unidad: string', 'rangoReferencia: string'], []),
+        clase('salud-imagen', 'EstudioImagen', 920, 1100,
+            ['modalidad: string', 'archivoUrl: string', 'informe: text'], []),
+        clase('salud-receta', 'Receta', 920, 760,
+            ['id: int', 'fecha: Date', 'indicaciones: text'], []),
+        clase('salud-medicamento', 'Medicamento', 1380, 760,
+            ['id: int', 'nombre: string', 'concentracion: string', 'formaFarmaceutica: string'], []),
+        clase('salud-certificado', 'Certificado', 1380, 0,
+            ['id: int', 'tipo: string', 'fecha: DateTime', 'codigoVerificacion: string {unico}', 'hashBloque: string'],
+            ['verificar(): boolean']),
+        clase('salud-permisos', 'Permisos', 0, 760, [
+            'PACIENTE: Paciente ver propios',
+            'PACIENTE: HistoriaClinica ver propios',
+            'PACIENTE: FichaAtencion ver,crear propios',
+            'PACIENTE: TriajeIA ver propios',
+            'PACIENTE: Consulta ver propios',
+            'PACIENTE: Examen ver propios',
+            'PACIENTE: ExamenLaboratorio ver propios',
+            'PACIENTE: EstudioImagen ver propios',
+            'PACIENTE: Receta ver propios',
+            'PACIENTE: Certificado ver propios',
+            'PACIENTE: CentroMedico ver todos',
+            'MEDICO: Medico ver propios',
+            'MEDICO: Paciente ver todos',
+            'MEDICO: HistoriaClinica ver todos',
+            'MEDICO: FichaAtencion ver,editar todos',
+            'MEDICO: Consulta todo todos',
+            'MEDICO: Examen todo todos',
+            'MEDICO: Receta todo todos',
+            'MEDICO: Certificado ver,crear todos',
+            'MEDICO: Medicamento ver,crear todos',
+            'MEDICO: TriajeIA ver todos',
+            'MEDICO: ExamenLaboratorio todo todos',
+            'MEDICO: EstudioImagen todo todos',
+            'MEDICO: CentroMedico ver todos'
+        ], [])
+    ],
+    edges: [
+        // La historia clínica es el centro del caso: todo lo del paciente cuelga de ella, y así
+        // cada registro tiene un único camino hasta su dueño (lo que exige la política de permisos).
+        rel('salud-paciente-historia', 'salud-paciente', 'salud-historia', 'Composition', '1', '1'),
+        rel('salud-historia-ficha', 'salud-historia', 'salud-ficha', 'Aggregation', '1', '*'),
+        rel('salud-ficha-triaje', 'salud-ficha', 'salud-triaje', 'Composition', '1', '1'),
+        rel('salud-ficha-consulta', 'salud-ficha', 'salud-consulta', 'Association', '1', '1'),
+        rel('salud-medico-consulta', 'salud-medico', 'salud-consulta', 'Association', '1', '*'),
+        rel('salud-centro-medico', 'salud-centro', 'salud-medico', 'Association', '1', '*'),
+        rel('salud-centro-ficha', 'salud-centro', 'salud-ficha', 'Association', '1', '*'),
+        rel('salud-consulta-examen', 'salud-consulta', 'salud-examen', 'Association', '1', '*'),
+        rel('salud-examen-laboratorio', 'salud-laboratorio', 'salud-examen', 'Generalization'),
+        rel('salud-examen-imagen', 'salud-imagen', 'salud-examen', 'Generalization'),
+        rel('salud-consulta-receta', 'salud-consulta', 'salud-receta', 'Composition', '1', '*'),
+        rel('salud-receta-medicamento', 'salud-receta', 'salud-medicamento', 'Association', '*', '*'),
+        rel('salud-consulta-certificado', 'salud-consulta', 'salud-certificado', 'Association', '1', '*')
+    ]
+};
+
+export const TABLEROS_PRUEBA = [tienda, biblioteca, clinica, academico, banco, gimnasio, gimnasioConPermisos, salud];
 
 /**
  * Deja las cuentas de prueba con exactamente estos tableros: restaura su contenido y borra los
