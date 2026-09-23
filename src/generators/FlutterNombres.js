@@ -35,8 +35,25 @@ export const claveJson = (campo) => {
     return getter.replace(/^[A-Z]+/, (m) => m.toLowerCase());
 };
 
+/**
+ * Dart no admite tildes ni eñes en los nombres de variables o clases (Java sí), así que los
+ * identificadores se pasan a ASCII: la clase "Día" es "Dia" y el campo "díaId" es "diaId".
+ * Las claves JSON no cambian: siguen viajando con tilde, como las expone el backend.
+ */
+export const aAscii = (texto) => {
+    const limpio = String(texto ?? '')
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')   // quita los acentos ya separados
+        .replace(/ñ/g, 'n').replace(/Ñ/g, 'N')
+        .replace(/[^A-Za-z0-9_]/g, '');
+    return /^[0-9]/.test(limpio) ? `n${limpio}` : limpio;
+};
+
 /** Identificador Dart válido para una clave JSON. */
-export const identificadorDart = (clave) => (RESERVADAS_DART.has(clave) ? `${clave}Valor` : clave);
+export const identificadorDart = (clave) => {
+    const nombre = aAscii(clave) || 'campo';
+    return RESERVADAS_DART.has(nombre) ? `${nombre}Valor` : nombre;
+};
 
 /** Clave JSON de un atributo tal como la expone el DTO (las FK terminan en "Id"). */
 export const claveDeAtributo = (attr) =>
@@ -66,11 +83,14 @@ export const largoMaximo = (attr) => {
     return Number(attr.sqlType?.match(/\d+/)?.[0] || 255);
 };
 
-export const nombreClase = (nombre) => String(nombre).charAt(0).toUpperCase() + String(nombre).slice(1);
+export const nombreClase = (nombre) => {
+    const limpio = aAscii(nombre) || 'Clase';
+    return limpio.charAt(0).toUpperCase() + limpio.slice(1);
+};
 
 /** Nombre de archivo Dart en snake_case: DetalleVenta -> detalle_venta */
 export const archivoDart = (nombre) =>
-    String(nombre).replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/[^A-Za-z0-9_]/g, '_').toLowerCase();
+    (aAscii(nombre) || 'modelo').replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
 
 /** Texto legible para etiquetas: "precioVenta" -> "Precio venta", "categoriaId" -> "Categoria" */
 export const etiquetaCampo = (texto) => {

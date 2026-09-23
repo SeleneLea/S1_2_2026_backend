@@ -311,7 +311,7 @@ class _${clase}ListScreenState extends State<${clase}ListScreen> {
             ...conControlador.map(c => `  final _${c.nombre}Ctrl = TextEditingController();`),
             ...campos.filter(c => c.control === 'bool').map(c => `  bool _${c.nombre} = false;`),
             ...campos.filter(c => c.control === 'fk').map(c => `  ${this.campoPk(c.ref).tipo}? _${c.nombre};`),
-            ...muchos.map(c => `  Set<int> _${c.nombre} = {};`),
+            ...muchos.map(c => `  Set<${this.campoPk(c.ref).tipo}> _${c.nombre} = {};`),
             ...referencias.map(r => `  List<${nombreClase(r.name)}> _opciones${nombreClase(r.name)} = [];`)
         ].join('\n');
 

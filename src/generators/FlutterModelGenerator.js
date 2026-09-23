@@ -1,6 +1,6 @@
 import {
     atributosDTO, claveDeAtributo, claveMuchosAMuchos, esSoloFecha, identificadorDart,
-    muchosAMuchosPropios, nombreClase, tipoDart
+    muchosAMuchosPropios, nombreClase, pkDe, tipoDart
 } from './FlutterNombres.js';
 
 /**
@@ -16,6 +16,25 @@ class FlutterModelGenerator {
         this.relationships = relationships;
     }
 
+    /**
+     * Tipo Dart del campo. En una clave foránea manda el tipo de la clave de la clase
+     * referenciada: si no, el modelo declaraba int y el formulario String, y no compilaba.
+     */
+    tipoDeCampo(attr) {
+        if (attr.isForeignKey && attr.referencedEntity) {
+            const referida = this.entities.find(e => e.name === attr.referencedEntity);
+            const pkReferida = referida ? pkDe(referida, this.entities, this.relationships) : null;
+            if (pkReferida) return tipoDart(pkReferida.type);
+        }
+        return tipoDart(attr.type);
+    }
+
+    /** Tipo de la lista de ids de un muchos a muchos, según la clave de la otra clase. */
+    tipoDeLista(otra) {
+        const pkOtra = pkDe(otra, this.entities, this.relationships);
+        return `List<${pkOtra ? tipoDart(pkOtra.type) : 'int'}>`;
+    }
+
     generate(entity) {
         const clase = nombreClase(entity.name);
         const atributos = atributosDTO(entity, this.entities, this.relationships);
@@ -24,14 +43,14 @@ class FlutterModelGenerator {
             return {
                 clave,
                 nombre: identificadorDart(clave),
-                tipo: tipoDart(attr.type),
+                tipo: this.tipoDeCampo(attr),
                 soloFecha: esSoloFecha(attr.type),
                 esPk: attr.isPrimaryKey === true
             };
         });
         muchosAMuchosPropios(entity, this.entities, this.relationships).forEach(otra => {
             const clave = claveMuchosAMuchos(otra);
-            campos.push({ clave, nombre: identificadorDart(clave), tipo: 'List<int>' });
+            campos.push({ clave, nombre: identificadorDart(clave), tipo: this.tipoDeLista(otra) });
         });
 
         const pk = campos.find(c => c.esPk);
