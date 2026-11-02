@@ -185,6 +185,8 @@ class CrearPaginaController {
           id: node.id,
           name: resolvedName,
           ...(resolvedName !== nombreDibujado ? { etiqueta: nombreDibujado } : {}),
+          // Ruta real de la API si el diagrama salió de un backend existente (código importado)
+          ...(typeof node.data?.rutaApi === 'string' && /^[A-Za-z0-9/_-]{1,120}$/.test(node.data.rutaApi) ? { rutaApi: node.data.rutaApi } : {}),
           type: 'class',
           attributes: processedAttributes,
           methods: rawMethods || [],

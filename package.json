@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
-    "test": "node --test correcciones/pruebas/generacion.test.mjs correcciones/pruebas/permisos.test.mjs correcciones/pruebas/colaboracion.test.mjs correcciones/pruebas/jsonIA.test.mjs correcciones/pruebas/importarEap.test.mjs correcciones/pruebas/exportarEap.test.mjs",
+    "test": "node --test correcciones/pruebas/generacion.test.mjs correcciones/pruebas/permisos.test.mjs correcciones/pruebas/colaboracion.test.mjs correcciones/pruebas/jsonIA.test.mjs correcciones/pruebas/importarEap.test.mjs correcciones/pruebas/exportarEap.test.mjs correcciones/pruebas/rutasPropias.test.mjs",
     "pruebas:generar": "node correcciones/pruebas/generar-local.mjs",
     "pruebas:exportar": "node correcciones/pruebas/generar-local.mjs",
     "pruebas:backend": "node correcciones/pruebas/verificar-proyectos.mjs backend",

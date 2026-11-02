@@ -1,5 +1,5 @@
 import { claseServicio } from './FlutterNombres.js';
-import { rutaEntidad } from './NombresReservados.js';
+import { rutaDe } from './NombresReservados.js';
 import { archivoDart, nombreClase, pkDe, referenciasConOpciones, tipoDart } from './FlutterNombres.js';
 
 /**
@@ -21,7 +21,7 @@ class FlutterServiceGenerator {
         const clase = nombreClase(entity.name);
         const pk = pkDe(entity, this.entities, this.relationships);
         const tipoId = pk ? tipoDart(pk.type) : 'int';
-        const ruta = rutaEntidad(entity.name);
+        const ruta = rutaDe(entity);
         const referencias = referenciasConOpciones(entity, this.entities, this.relationships, this.entidadesConApi);
 
         const imports = [
@@ -37,7 +37,7 @@ class FlutterServiceGenerator {
             const pkRef = pkDe(r, this.entities, this.relationships);
             return `
   Future<base.Pagina<${ref}>> get${ref}Pagina({int pagina = 0, int tamano = 20, String? buscar}) async {
-    return base.Pagina.desde(await getRespuesta('/${rutaEntidad(r.name)}', consultaPagina(pagina, tamano, buscar)), ${ref}.fromJson);
+    return base.Pagina.desde(await getRespuesta('/${rutaDe(r)}', consultaPagina(pagina, tamano, buscar)), ${ref}.fromJson);
   }
 
   /// La primera página; nunca descarga la tabla completa.
@@ -46,7 +46,7 @@ class FlutterServiceGenerator {
   }
 
   Future<${ref}> get${ref}OpcionPorId(${pkRef ? tipoDart(pkRef.type) : 'int'} id) async {
-    return ${ref}.fromJson(await getData('/${rutaEntidad(r.name)}/\${Uri.encodeComponent(id.toString())}') as Map<String, dynamic>);
+    return ${ref}.fromJson(await getData('/${rutaDe(r)}/\${Uri.encodeComponent(id.toString())}') as Map<String, dynamic>);
   }
 `;
         }).join('');
@@ -109,7 +109,9 @@ class ApiException implements Exception {
   }
 }
 
-/// Sobre paginado del backend; total incluye todas las coincidencias.
+/// Sobre paginado del backend; total incluye todas las coincidencias. También acepta el Page de
+/// Spring Data ({content, totalElements, number, last}) y una lista simple, para usar la app con un
+/// backend que no generó la herramienta.
 class Pagina<T> {
   final List<T> items;
   final int total;
@@ -118,11 +120,22 @@ class Pagina<T> {
 
   const Pagina({required this.items, required this.total, required this.pagina, required this.hayMas});
 
-  factory Pagina.desde(Map<String, dynamic> respuesta, T Function(Map<String, dynamic>) desdeJson) {
-    final items = ((respuesta['data'] as List?) ?? const [])
+  factory Pagina.desde(dynamic respuesta, T Function(Map<String, dynamic>) desdeJson) {
+    List<T> leer(dynamic lista) => ((lista as List?) ?? const [])
         .map((e) => desdeJson(e as Map<String, dynamic>)).toList();
-    return Pagina(items: items, total: (respuesta['total'] as num?)?.toInt() ?? items.length,
-      pagina: (respuesta['pagina'] as num?)?.toInt() ?? 0, hayMas: respuesta['hayMas'] == true);
+    if (respuesta is List) {
+      final items = leer(respuesta);
+      return Pagina(items: items, total: items.length, pagina: 0, hayMas: false);
+    }
+    final mapa = respuesta is Map<String, dynamic> ? respuesta : const <String, dynamic>{};
+    if (mapa['data'] is! List && mapa['content'] is List) {
+      final items = leer(mapa['content']);
+      return Pagina(items: items, total: (mapa['totalElements'] as num?)?.toInt() ?? items.length,
+        pagina: (mapa['number'] as num?)?.toInt() ?? 0, hayMas: mapa['last'] == false);
+    }
+    final items = leer(mapa['data']);
+    return Pagina(items: items, total: (mapa['total'] as num?)?.toInt() ?? items.length,
+      pagina: (mapa['pagina'] as num?)?.toInt() ?? 0, hayMas: mapa['hayMas'] == true);
   }
 }
 
@@ -141,9 +154,9 @@ class BaseService {
     if (buscar != null && buscar.trim().isNotEmpty) 'buscar': buscar.trim(),
   };
 
-  Future<Map<String, dynamic>> getRespuesta(String ruta, Map<String, String> consulta) async {
+  Future<dynamic> getRespuesta(String ruta, Map<String, String> consulta) async {
     final uri = Uri.parse('$baseUrl$ruta').replace(queryParameters: consulta);
-    return await _enviar(() => http.get(uri, headers: _cabeceras), completo: true) as Map<String, dynamic>;
+    return await _enviar(() => http.get(uri, headers: _cabeceras), completo: true);
   }
 
   Future<dynamic> postData(String ruta, Map<String, dynamic> cuerpo) => _enviar(

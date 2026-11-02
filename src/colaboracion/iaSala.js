@@ -11,6 +11,7 @@
 import AIEditorController from '../controllers/ai.editor.controller.js';
 import { conCandado } from './candado.js';
 import { extraerJSON, textoLegible } from './jsonIA.js';
+import { diagramaPropuestoDesdeCodigo } from './propuestaDesdeCodigo.js';
 import {
     aplicarOperaciones, describirOperacion, diagramaComoTexto, nombresPorId, operacionesPropuestas,
 } from './diagramaSemantico.js';
@@ -347,6 +348,41 @@ ${cambios.map((c) => `[${hora(c.creadoEn)}] ${autorDeCambio(c)} ${c.resumen}`).j
  * @param {object} pedido  el mensaje del integrante ya guardado
  * @param {{id: number, nombre: string}} autor
  */
+/**
+ * Código -> diagrama: las diferencias entre un proyecto Spring Boot importado y el diagrama quedan
+ * como propuesta en el chat de la IA (vista previa en la pizarra; el equipo acepta o rechaza).
+ * @param {{archivo?: string, entidades?: number}} origen  qué se importó (para el mensaje)
+ */
+export const proponerDesdeCodigo = async (salaId, cambios, autor, origen = {}) => {
+    const quien = autor?.nombre || 'alguien';
+    const estado = await servidor.estadoActual(salaId);
+    const r = diagramaPropuestoDesdeCodigo(estado, cambios);
+    if (r.error) return { ok: false, mensaje: r.error };
+    const operaciones = operacionesPropuestas(estado, r.propuesto);
+    const archivo = String(origen.archivo || 'el proyecto').slice(0, 120);
+    const entidades = Number.isInteger(origen.entidades) ? origen.entidades : null;
+    const deDonde = `${archivo}${entidades !== null ? `, ${entidades} entidad${entidades === 1 ? '' : 'es'}` : ''}`;
+    const base = { proveedor: 'código', origen: 'codigo', pedidoPor: quien, tipoRespuesta: 'cambios' };
+    if (!operaciones.length) {
+        await publicarMensajeIA(salaId, `📥 ${quien} importó el código (${deDonde}): el diagrama ya coincide con el código.`, base);
+        return { ok: true, sinCambios: true };
+    }
+    const nombreDe = nombresPorId(estado, r.propuesto);
+    const resumen = operaciones.map((op) => describirOperacion(op, nombreDe));
+    const n = operaciones.length;
+    const mensaje = await publicarMensajeIA(salaId,
+        `📥 ${quien} importó el código (${deDonde}). Hay ${n} diferencia${n === 1 ? '' : 's'} con el diagrama: quedan como propuesta para que el equipo decida.`,
+        { ...base, propuesta: { estado: 'pendiente', cantidad: n } });
+    const propuesta = await guardarPropuesta({
+        salaId, mensajeId: mensaje.id, pedidoPorId: autor?.id ?? null, pedidoPorNombre: quien,
+        instruccion: `Sincronizar el diagrama con el código (${archivo})`, operaciones, resumen,
+    });
+    const actualizado = await actualizarDatosMensaje(mensaje.id, { propuesta: { id: propuesta.id, estado: 'pendiente', cantidad: n } });
+    servidor.emitir(salaId, 'chat:actualizado', actualizado);
+    servidor.emitir(salaId, 'propuesta:nueva', propuesta);
+    return { ok: true, propuestaId: propuesta.id, cantidad: n };
+};
+
 export const pedirALaIA = (salaId, pedido, autor, extras = {}) => {
     if (!colas.has(salaId)) colas.set(salaId, { cola: Promise.resolve(), enCola: 0, atendiendo: null });
     const c = colas.get(salaId);

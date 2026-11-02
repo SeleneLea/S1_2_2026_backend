@@ -1,5 +1,6 @@
 import { validarRestricciones } from './RestriccionesUML.js';
 import { extraerPermisos } from './Permisos.js';
+import { ajustarRutasPropias } from './NombresReservados.js';
 
 class DiagramParser {
 
@@ -10,6 +11,7 @@ class DiagramParser {
             const diagram = { ...original, elements: politica.elementos, connections: politica.conexiones };
             const entities = this.extractEntities(diagram);
             const manyToManyTables = this.extractManyToManyTables(diagram);
+            ajustarRutasPropias(entities, manyToManyTables);
             const ids = new Set([...entities, ...manyToManyTables].map(e => e.id));
             const relationships = this.extractRelationships(diagram).filter(r => ids.has(r.source) && ids.has(r.target));
             return {
@@ -42,6 +44,8 @@ class DiagramParser {
                     description: element.description || '',
                     // Nombre tal como se dibujó ("Día") cuando el del código cambió ("Dia")
                     etiqueta: element.etiqueta,
+                    // Ruta de la API del backend existente del que salió el diagrama (si la hay)
+                    rutaApi: element.rutaApi,
                     // Clase de asociación: pares de claves que no se repiten (un enlace por par)
                     paresUnicos: element.paresUnicos || []
                 });

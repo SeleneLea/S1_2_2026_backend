@@ -1,4 +1,4 @@
-import { rutaEntidad } from './NombresReservados.js';
+import { rutaDe } from './NombresReservados.js';
 import { detectarRoles } from './AuthGenerator.js';
 // Nombre de BD coherente con SpringBootProjectBuilder: se quita el timestamp
 // que el nombre de carpeta lleva para evitar colisiones.
@@ -423,7 +423,7 @@ ${regularAttrs.map(attr => `- \`${attr.name}\` (${attr.type})`).join('\n')}
     generateEndpointDocumentation(entities) {
         let docs = '';
         entities.forEach(entity => {
-            const entityPath = rutaEntidad(entity.name);
+            const entityPath = rutaDe(entity);
             const pkType = this.getPrimaryKeyType(entity);
             docs += `
 ### ${entity.name} (\`/api/${entityPath}\`)

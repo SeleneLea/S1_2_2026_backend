@@ -308,6 +308,36 @@ try {
     assert.equal(cambioLocal.pedido_por, USUARIOS_PRUEBA[0].name);
     paso('los cambios de la IA local quedan en "Quién hizo qué" como de la IA (pedido por quien la usó)');
 
+    // ── Código -> diagrama: las diferencias con un proyecto importado quedan como propuesta ──
+    const antesCodigo = await estadoVivo(s3, salaId);
+    const clienteNodo = antesCodigo.nodes.find((n) => n.id === 'A');
+    // Mientras tanto, alguien agrega una clase que el código no conoce: la propuesta no debe borrarla
+    await ack(s3, 'operaciones', { salaId, lote: { id: 'clienteprueba:5', ops: [{ op: 'ponerNodo', nodo: clase('Z', 'Ajena', ['id: Long'], 1500) }] } });
+    const desdeCodigo = await ack(s3, 'codigo:proponer', {
+        salaId,
+        origen: { archivo: 'backend.zip', entidades: 2 },
+        cambios: {
+            nodos: [
+                { ...clienteNodo, data: { ...clienteNodo.data, attributes: [...clienteNodo.data.attributes, 'correo: String {unico}'] } },
+                { id: 'codigo-proveedor', type: 'classNode', position: { x: 0, y: 0 }, data: { className: 'Proveedor', attributes: ['id: Long', 'nombre: String'], methods: [] } },
+            ],
+            aristas: [{ id: 'codigo-rel-1', source: 'codigo-proveedor', target: 'A', type: 'umlEdge', data: { type: 'Association', startLabel: '1', endLabel: '*' } }],
+            quitarNodos: [], quitarAristas: [],
+        },
+    });
+    assert.equal(desdeCodigo.ok, true, desdeCodigo.mensaje);
+    assert.equal(desdeCodigo.cantidad, 3, 'modificar Cliente, agregar Proveedor y su relación');
+    const propCodigo = await repo.obtenerPropuesta(desdeCodigo.propuestaId);
+    assert.equal(propCodigo.estado, 'pendiente');
+    assert.deepEqual(propCodigo.operaciones.map((o) => o.op).sort(), ['agregarClase', 'agregarRelacion', 'modificarClase']);
+    assert.ok(!propCodigo.operaciones.some((o) => o.op === 'eliminarClase'), 'la clase agregada mientras tanto no se borra');
+    assert.ok((await estadoVivo(s3, salaId)).nodes.some((n) => n.id === 'Z'));
+    const sinDiferencias = await ack(s3, 'codigo:proponer', { salaId, origen: { archivo: 'igual.zip' }, cambios: { nodos: [], aristas: [] } });
+    assert.equal(sinDiferencias.sinCambios, true);
+    const malo = await ack(s3, 'codigo:proponer', { salaId, cambios: { nodos: [{ id: '../x', type: 'classNode', data: { className: 'X' } }], aristas: [{ id: 'r', source: 'A', target: 'noexiste', data: { type: 'Association' } }] } });
+    assert.equal(malo.sinCambios, true, 'lo inválido se descarta');
+    paso('código -> diagrama: las diferencias quedan como propuesta y no borran lo que otro agregó mientras tanto');
+
     // ── "Pedir ajuste" reemplaza la propuesta anterior (IA real) ──
     if (CON_IA) {
         const propuesta1 = evento(s3, 'propuesta:nueva', () => true, 120000);

@@ -1,5 +1,5 @@
 import { archivoServicio } from './FlutterNombres.js';
-import { rutaEntidad } from './NombresReservados.js';
+import { rutaDe } from './NombresReservados.js';
 import path from 'path';
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
@@ -195,8 +195,8 @@ class FlutterProjectBuilder {
   }
 
   documentarNombres() {
-    const rutas = this.entidadesConApi.filter(e => rutaEntidad(e.name).startsWith('entidades/'))
-      .map(e => `- ${e.name}: API de la entidad en /api/${rutaEntidad(e.name)}.`);
+    const rutas = this.entidadesConApi.filter(e => rutaDe(e).startsWith('entidades/'))
+      .map(e => `- ${e.name}: API de la entidad en /api/${rutaDe(e)}.`);
     return '\n## Nombres de servicios y rutas\n\n' +
       'Los servicios CRUD usan archivos entidad_<nombre>_service.dart y clases Api<Nombre>Service para conservar los servicios de sesión, asistente y conexión. Los modelos conservan el nombre del diagrama.\n\n' +
       rutas.join('\n') + '\n';

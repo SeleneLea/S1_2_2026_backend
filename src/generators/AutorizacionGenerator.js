@@ -1,4 +1,4 @@
-import { rutaEntidad } from './NombresReservados.js';
+import { rutaDe } from './NombresReservados.js';
 
 const cadena = valor => JSON.stringify(String(valor ?? ''));
 const lista = valores => `java.util.List.of(${valores.map(cadena).join(', ')})`;
@@ -10,7 +10,7 @@ export function archivosAutorizacion(politica, entidades) {
         `        java.util.Map.entry(${cadena(rol)}, java.util.Map.ofEntries(${Object.entries(modulos).map(([modulo, regla]) =>
             `\n            java.util.Map.entry(${cadena(modulo)}, new Regla(${conjunto(regla.acciones)}, ${cadena(regla.alcance)}, ${lista(regla.camino || [])}, ${cadena(regla.entidadTitular)}, ${cadena(regla.campoId || 'id')}))`
         ).join(',')}))`).join(',\n');
-    const rutas = entidades.map(e => `java.util.Map.entry(${cadena('/api/' + rutaEntidad(e.name))}, ${cadena(e.name)})`).join(',\n        ');
+    const rutas = entidades.map(e => `java.util.Map.entry(${cadena('/api/' + rutaDe(e))}, ${cadena(e.name)})`).join(',\n        ');
     const titulares = politica.roles.filter(r => r.clase).map(r => `java.util.Map.entry(${cadena(r.rol)}, ${cadena(r.clase)})`).join(', ');
     return {
         'config/Permisos.java': `package com.example.demo.config;

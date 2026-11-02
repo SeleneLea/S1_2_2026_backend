@@ -6,6 +6,7 @@
  *   chat:anteriores   { salaId, canal, antesDe }        ack { mensajes, hayMas }   canal: equipo | ia
  *   chat:enviar       { salaId, texto, paraIA }         ack { ok, mensaje }
  *   chat:importar     { salaId, mensajes: [...] }       ack { ok, aceptados: [idLocal] }   lo escrito sin conexión
+ *   codigo:proponer   { salaId, cambios, origen }       ack { ok, propuestaId?, cantidad?, sinCambios? }   código -> diagrama
  * Cada mensaje trae su canal: 'equipo' (entre personas) o 'ia' (pedidos a la IA y sus respuestas).
  *   propuesta:decidir { salaId, propuestaId, decision } ack { ok, mensaje? }   decision: aceptar | rechazar
  *   historial:listar  { salaId, autor? }                ack { cambios }
@@ -14,7 +15,7 @@
  * Servidor → quien entra:
  *   chat:bienvenida   { texto, desde }  lo que pasó desde su última visita
  */
-import { decidirPropuesta, estadoIA, pedirALaIA } from './iaSala.js';
+import { decidirPropuesta, estadoIA, pedirALaIA, proponerDesdeCodigo } from './iaSala.js';
 import { avisarIntegrantes } from './notificacionesPush.js';
 import {
     CANALES, guardarMensaje, importarMensaje, leerUltimaVisita, listarCambios, listarMensajes, listarPropuestas, marcarVisita, mensajesDesde, marcaDeTiempo,
@@ -29,6 +30,14 @@ const textoCorto = (v, max = 120) => (typeof v === 'string' && v.trim() ? v.trim
  * Un mensaje escrito sin conexión, validado. El autor sale de la sesión (no del navegador). Lo que
  * "dijo" la IA local queda como de la IA local DE esa persona: la IA compartida no lo dijo.
  */
+/** Observaciones de una revisión hecha sin conexión: solo los campos conocidos, acotados. */
+const observacionesValidas = (lista) => lista.slice(0, 40).map((o) => ({
+    clase: textoCorto(o?.clase, 120) || '',
+    nodoId: textoCorto(o?.nodoId, 120) || null,
+    gravedad: ['error', 'aviso', 'sugerencia'].includes(o?.gravedad) ? o.gravedad : 'aviso',
+    texto: String(o?.texto || '').trim().slice(0, 400),
+})).filter((o) => o.texto);
+
 export const filaSinConexion = (m, autor) => {
     if (!m || typeof m !== 'object' || !ID_LOCAL.test(String(m.idLocal || ''))) return null;
     const texto = String(m.texto || '').trim().slice(0, LIMITE_TEXTO);
@@ -46,6 +55,9 @@ export const filaSinConexion = (m, autor) => {
                 ...(textoCorto(d.motor, 40) ? { motor: textoCorto(d.motor, 40) } : {}),
                 ...(textoCorto(d.modeloUsado, 80) ? { modeloUsado: textoCorto(d.modeloUsado, 80) } : {}),
                 ...(Number.isInteger(d.cambios) && d.cambios >= 0 ? { cambios: Math.min(d.cambios, 10000) } : {}),
+                // Revisión hecha sin conexión: sus observaciones marcan las clases también para los demás
+                ...(d.tipoRespuesta === 'revision' ? { tipoRespuesta: 'revision' } : {}),
+                ...(Array.isArray(d.observaciones) && d.observaciones.length ? { observaciones: observacionesValidas(d.observaciones) } : {}),
             },
         };
     }
@@ -223,6 +235,19 @@ export const registrarEventosColaboracion = (io, socket, autorDe) => {
             console.error('chat:importar', error.message);
             // Lo aceptado hasta el error ya quedó guardado: el resto se reintenta
             responder(ack, { ok: false, aceptados, mensaje: 'No se pudo compartir lo escrito sin conexión.' });
+        }
+    });
+
+    // Código -> diagrama: las diferencias con un proyecto Spring Boot importado quedan como propuesta
+    socket.on('codigo:proponer', async ({ salaId, cambios, origen } = {}, ack) => {
+        const id = enSala(salaId);
+        const autor = autorDe();
+        if (!id || !autor) return responder(ack, { ok: false, mensaje: 'Se perdió la conexión con el tablero. Recarga la página.' });
+        try {
+            responder(ack, await proponerDesdeCodigo(id, cambios || {}, autor, origen || {}));
+        } catch (error) {
+            console.error('codigo:proponer', error.message);
+            responder(ack, { ok: false, mensaje: 'No se pudo armar la propuesta con el código.' });
         }
     });
 

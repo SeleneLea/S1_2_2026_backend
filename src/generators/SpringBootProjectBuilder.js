@@ -1,4 +1,4 @@
-import { nombreLibre, aSnake, rutaEntidad, renombrarInfraestructura } from './NombresReservados.js';
+import { nombreLibre, aSnake, rutaDe, renombrarInfraestructura } from './NombresReservados.js';
 import { permisosDe, aplicarPermisos } from './Permisos.js';
 import { archivosAutorizacion } from './AutorizacionGenerator.js';
 import path from 'path';
@@ -76,7 +76,7 @@ class SpringBootProjectBuilder {
         };
         if (this.claseCuenta !== 'Usuario') this.avisos.push(`La cuenta de acceso usa la tabla ${aSnake(this.claseCuenta)}; las tablas del diagrama se conservan.`);
         for (const entidad of entidadesDiagrama) {
-            if (rutaEntidad(entidad.name).startsWith('entidades/')) this.avisos.push(`API de ${entidad.name}: /api/${rutaEntidad(entidad.name)}, para conservar las rutas de infraestructura.`);
+            if (rutaDe(entidad).startsWith('entidades/')) this.avisos.push(`API de ${entidad.name}: /api/${rutaDe(entidad)}, para conservar las rutas de infraestructura.`);
         }
         this.archivosEscritos = new Set();
         const metadataBuilder = new MetadataBuilder(

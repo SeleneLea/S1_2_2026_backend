@@ -1,4 +1,4 @@
-import { rutaEntidad } from './NombresReservados.js';
+import { rutaDe } from './NombresReservados.js';
 class ControllerGenerator {
     constructor(entities, relationships, metadata, politica = null) {
         this.entities = entities;
@@ -59,7 +59,7 @@ class ControllerGenerator {
 
     generateController(entity) {
         const pkType = this.getPrimaryKeyType(entity);
-        const entityPath = rutaEntidad(entity.name);
+        const entityPath = rutaDe(entity);
         const relationshipEndpoints = this.generateRelationshipEndpoints(entity);
         const isCompositeKey = this.isCompositeKey(entity);
         return `package com.example.demo.controllers;
@@ -398,7 +398,7 @@ ${this.conPermisos ? `        if (e instanceof com.example.demo.exceptions.Acces
 
     generateRelationshipEndpoints(entity) {
         let endpoints = '';
-        const entityPath = rutaEntidad(entity.name);
+        const entityPath = rutaDe(entity);
         const pkType = this.getPrimaryKeyType(entity);
         const processedEndpoints = new Set();
         const allAttributes = this.getAllAttributes(entity);

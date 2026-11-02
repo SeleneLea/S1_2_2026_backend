@@ -1,5 +1,5 @@
 import { archivoDart, etiquetaCampo, textoDart, etiquetaEntidad } from './FlutterNombres.js';
-import { rutaEntidad } from './NombresReservados.js';
+import { rutaDe } from './NombresReservados.js';
 
 /**
  * Archivos de proyecto de la app Flutter: main, pubspec, configuración de la
@@ -258,7 +258,7 @@ class ApiConfig {
 
     generateReadme(entidades = []) {
         const primera = entidades[0];
-        const ejemplo = primera ? `/api/${rutaEntidad(primera.name)}` : '/api/...';
+        const ejemplo = primera ? `/api/${rutaDe(primera)}` : '/api/...';
         const lista = entidades.map(e => `- **${etiquetaEntidad(e)}**: \`lib/screens/${archivoDart(e.name)}_list_screen.dart\``).join('\n');
         return `# ${this.titulo}
 
